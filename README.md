@@ -8,7 +8,16 @@ Part of the Odoo tooling family: [vodoo](https://github.com/julian-r/vodoo) (CLI
 
 ![Clockoo demo](docs/demo.gif)
 
-## Download
+## Install
+
+### Homebrew (recommended)
+
+```bash
+brew tap julian-r/clockoo
+brew install --cask clockoo
+```
+
+### Manual Download
 
 Grab the latest release from **[Releases](https://github.com/julian-r/clockoo/releases)** — download `Clockoo.dmg` or `Clockoo.app.zip`, unzip, and drag to `/Applications`.
 
