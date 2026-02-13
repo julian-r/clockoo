@@ -1,8 +1,9 @@
 import Foundation
 import Security
 
-/// Simple macOS Keychain wrapper for storing API keys
-/// Service: "com.clockoo", Account: the account ID
+/// Simple macOS Keychain wrapper for storing API keys.
+/// Service: "com.clockoo", Account: the account ID.
+/// The binary must be codesigned (ad-hoc is fine) to avoid repeated Keychain prompts.
 enum KeychainHelper {
     static let service = "com.clockoo"
 
@@ -14,7 +15,6 @@ enum KeychainHelper {
             kSecAttrAccount as String: accountId,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseDataProtectionKeychain as String: true,
         ]
 
         var result: AnyObject?
@@ -30,12 +30,10 @@ enum KeychainHelper {
     static func setAPIKey(_ apiKey: String, for accountId: String) throws {
         let data = apiKey.data(using: .utf8)!
 
-        // Try to update first
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: accountId,
-            kSecUseDataProtectionKeychain as String: true,
         ]
 
         let attributes: [String: Any] = [
@@ -45,10 +43,8 @@ enum KeychainHelper {
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
 
         if updateStatus == errSecItemNotFound {
-            // Item doesn't exist, add it
             var addQuery = query
             addQuery[kSecValueData as String] = data
-            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
             let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
             guard addStatus == errSecSuccess else {
                 throw KeychainError.unableToStore(status: addStatus)
@@ -64,7 +60,6 @@ enum KeychainHelper {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: accountId,
-            kSecUseDataProtectionKeychain as String: true,
         ]
         SecItemDelete(query as CFDictionary)
     }

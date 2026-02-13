@@ -230,11 +230,20 @@ struct SettingsView: View {
     }
 
     private func testConnection(account: EditableAccount) {
+        // Auto-save before testing so the key is in Keychain
+        saveAll()
+
         testResult = .testing
 
-        let apiKey = account.apiKey.isEmpty
-            ? (KeychainHelper.getAPIKey(for: account.id) ?? "")
-            : account.apiKey
+        let resolvedId = editingAccount?.id ?? account.id
+        let apiKey: String
+        let enteredKey = (editingAccount?.apiKey ?? account.apiKey)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !enteredKey.isEmpty {
+            apiKey = enteredKey
+        } else {
+            apiKey = KeychainHelper.getAPIKey(for: resolvedId) ?? ""
+        }
 
         guard !apiKey.isEmpty else {
             testResult = .failure("No API key — enter one above or save first")
