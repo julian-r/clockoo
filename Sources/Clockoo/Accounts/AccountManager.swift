@@ -83,7 +83,7 @@ final class AccountManager: ObservableObject {
             pollTimers[account.id] = timer
         }
 
-        // Update display every 30s for live elapsed time
+        // Trigger SwiftUI updates every second for live elapsed time in popover
         displayTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) {
             [weak self] _ in
             guard let self else { return }
@@ -130,20 +130,32 @@ final class AccountManager: ObservableObject {
         }
     }
 
-    // MARK: - Timer Actions
+    // MARK: - Timer Actions (with optimistic updates)
 
     func startTimer(timesheet: Timesheet) {
         guard let service = timerServices[timesheet.accountId] else { return }
+        // Optimistic: mark as running immediately
+        optimisticUpdate(timesheet: timesheet, running: true)
         Task {
-            try await service.startTimer(timesheetId: timesheet.id)
+            do {
+                try await service.startTimer(timesheetId: timesheet.id)
+            } catch {
+                print("[Timer] Start failed: \(error)")
+            }
             pollNow(accountId: timesheet.accountId)
         }
     }
 
     func stopTimer(timesheet: Timesheet) {
         guard let service = timerServices[timesheet.accountId] else { return }
+        // Optimistic: mark as stopped immediately
+        optimisticUpdate(timesheet: timesheet, running: false)
         Task {
-            try await service.stopTimer(timesheetId: timesheet.id)
+            do {
+                try await service.stopTimer(timesheetId: timesheet.id)
+            } catch {
+                print("[Timer] Stop failed: \(error)")
+            }
             pollNow(accountId: timesheet.accountId)
         }
     }
@@ -155,6 +167,46 @@ final class AccountManager: ObservableObject {
         case .stopped:
             startTimer(timesheet: timesheet)
         }
+    }
+
+    /// Immediately update local state for responsive UX.
+    /// The next poll will correct with the real server state.
+    private func optimisticUpdate(timesheet: Timesheet, running: Bool) {
+        guard var timesheets = timesheetsByAccount[timesheet.accountId],
+              let index = timesheets.firstIndex(where: { $0.id == timesheet.id })
+        else { return }
+
+        let updated = Timesheet(
+            id: timesheet.id,
+            accountId: timesheet.accountId,
+            name: timesheet.name,
+            projectName: timesheet.projectName,
+            source: timesheet.source,
+            unitAmount: timesheet.unitAmount,
+            timerStart: running ? Date() : nil,
+            date: timesheet.date
+        )
+
+        // If starting a timer, stop any other running timers (Odoo does this automatically)
+        if running {
+            for i in timesheets.indices {
+                if timesheets[i].state == .running && timesheets[i].id != timesheet.id {
+                    timesheets[i] = Timesheet(
+                        id: timesheets[i].id,
+                        accountId: timesheets[i].accountId,
+                        name: timesheets[i].name,
+                        projectName: timesheets[i].projectName,
+                        source: timesheets[i].source,
+                        unitAmount: timesheets[i].unitAmount,
+                        timerStart: nil,
+                        date: timesheets[i].date
+                    )
+                }
+            }
+        }
+
+        timesheets[index] = updated
+        timesheetsByAccount[timesheet.accountId] = timesheets
     }
 
     /// Get the base URL for an account (for opening web URLs)

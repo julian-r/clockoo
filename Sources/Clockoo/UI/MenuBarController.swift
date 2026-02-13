@@ -8,7 +8,8 @@ final class MenuBarController {
     private var popover: NSPopover!
     private var updateTimer: Timer?
     private var blinkTimer: Timer?
-    private var blinkVisible = true
+    private var blinkPhase = false
+    private var isBlinking = false
     private let accountManager: AccountManager
     private let settingsController: SettingsWindowController
 
@@ -55,6 +56,7 @@ final class MenuBarController {
     }
 
     private func startDisplayUpdates() {
+        // Single timer drives both display updates and blinking
         updateTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) {
             [weak self] _ in
             guard let self else { return }
@@ -69,55 +71,43 @@ final class MenuBarController {
 
         if let running = accountManager.runningTimesheet {
             // Timer is running — show filled clock + elapsed time
-            stopBlinking()
+            isBlinking = false
             button.image = NSImage(
                 systemSymbolName: "clock.fill",
                 accessibilityDescription: "Timer running"
             )
             button.title = " \(running.elapsedFormatted)"
             button.contentTintColor = .systemGreen
-            button.appearsDisabled = false
         } else {
             // No running timer
             button.title = ""
-            button.contentTintColor = nil
 
             if accountManager.blinkWhenIdle && !accountManager.accounts.isEmpty {
-                startBlinking()
+                // Blink: alternate every update cycle (1s)
+                isBlinking = true
+                blinkPhase.toggle()
+                if blinkPhase {
+                    button.image = NSImage(
+                        systemSymbolName: "clock.fill",
+                        accessibilityDescription: "Clockoo — no timer running"
+                    )
+                    button.contentTintColor = .systemOrange
+                } else {
+                    button.image = NSImage(
+                        systemSymbolName: "clock",
+                        accessibilityDescription: "Clockoo"
+                    )
+                    button.contentTintColor = nil
+                }
             } else {
-                stopBlinking()
+                isBlinking = false
                 button.image = NSImage(
                     systemSymbolName: "clock",
                     accessibilityDescription: "Clockoo"
                 )
-                button.appearsDisabled = false
+                button.contentTintColor = nil
             }
         }
-    }
-
-    // MARK: - Blink
-
-    private func startBlinking() {
-        guard blinkTimer == nil else { return }
-        blinkVisible = true
-        blinkTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) {
-            [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in
-                self.blinkVisible.toggle()
-                self.statusItem.button?.image = NSImage(
-                    systemSymbolName: self.blinkVisible ? "clock" : "clock.fill",
-                    accessibilityDescription: "Clockoo — no timer running"
-                )
-                self.statusItem.button?.contentTintColor = self.blinkVisible ? nil : .systemOrange
-            }
-        }
-    }
-
-    private func stopBlinking() {
-        blinkTimer?.invalidate()
-        blinkTimer = nil
-        blinkVisible = true
     }
 
     @objc private func togglePopover() {
