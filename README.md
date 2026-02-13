@@ -6,113 +6,79 @@ No Electron. No browser. Native Swift. ~10-20 MB memory.
 
 Part of the Odoo tooling family: [vodoo](https://github.com/julian-r/vodoo) (CLI) · [ghoodoo](https://github.com/julian-r/ghoodoo) (GitHub sync) · **clockoo** (time tracking)
 
+![Clockoo demo](docs/demo.gif)
+
+## Download
+
+Grab the latest release from **[Releases](https://github.com/julian-r/clockoo/releases)** — download `Clockoo.dmg` or `Clockoo.app.zip`, unzip, and drag to `/Applications`.
+
+> Ad-hoc signed. On first launch macOS may ask you to allow it in System Settings → Privacy & Security.
+
 ## Features
 
 - 🕐 **Menu bar icon** with live elapsed time when a timer is running
-- 📋 **Popover** showing today's timesheets grouped by account
 - 🔍 **Search** — find tasks, tickets, and recent timesheets to start a timer on
 - ▶️ **Start / Stop** timers with a click (matches Odoo's task UI)
-- 🗑️ **Delete** timesheet entries (workaround for server-side minimum duration)
+- 🗑️ **Delete** timesheet entries
 - 🔗 **Open in browser** — jump to the task or ticket in Odoo
 - 👥 **Multi-account** — multiple Odoo instances side by side
 - 🔐 **Keychain storage** — API keys never touch config files
-- 🎛️ **Stream Deck API** — local HTTP server on port 19847
+- 🎛️ **Stream Deck API** — local HTTP server for integrations ([docs](docs/API.md))
 - ⚡ **Optimistic UI** — actions feel instant, server confirms in background
 - 🔔 **Blink when idle** — orange pulsing icon when no timer is running
-- 🚀 **Launch at login** via LaunchAgent
-- 🌐 **Dual API support** — JSON-2 (Odoo 19+) and legacy JSON-RPC (Odoo 14-18)
+- 🚀 **Launch at login**
+- 🌐 **Dual API** — JSON-2 (Odoo 19+) and legacy JSON-RPC (Odoo 14-18)
 - 📦 **Zero dependencies** — pure Swift, AppKit + SwiftUI
 
-## Setup
+## Getting Started
 
-### 1. Build
+### 1. Launch Clockoo
 
-```bash
-./build.sh
-# or manually:
-swift build && codesign --force --sign - .build/debug/Clockoo
-```
+Download from [Releases](https://github.com/julian-r/clockoo/releases) or build from source (see below).
 
-> Ad-hoc codesigning is required to avoid Keychain password prompts on every launch.
+### 2. Add an Account
 
-### 2. Configure
+Click the clock icon in the menu bar → **Settings** → click **+** to add an account:
 
-Create `~/.config/clockoo/accounts.json`:
+| Field | Example |
+|-------|---------|
+| ID | `work` |
+| Label | `My Company` |
+| URL | `https://mycompany.odoo.com` |
+| Database | `mycompany` |
+| Username | `user@example.com` |
+| API Version | JSON-2 (Odoo 19+) or Legacy (Odoo 14-18) |
 
-```json
-{
-    "accounts": [
-        {
-            "id": "work",
-            "label": "Work",
-            "url": "https://mycompany.odoo.com",
-            "database": "mycompany",
-            "username": "user@example.com",
-            "apiVersion": "json2"
-        }
-    ],
-    "blinkWhenIdle": true
-}
-```
+### 3. Enter API Key
 
-| Field | Description |
-|-------|-------------|
-| `id` | Unique identifier, used as Keychain account name |
-| `label` | Display name in the UI |
-| `url` | Odoo instance URL |
-| `database` | Database name |
-| `username` | Login email |
-| `apiVersion` | `"json2"` (Odoo 19+) or `"legacy"` (Odoo 14-18) |
-
-### 3. Add API Key
-
-Via the **Settings** window (recommended), or manually:
-
-```bash
-security add-generic-password -s "com.clockoo" -a "work" -w "your-odoo-api-key"
-```
+In the account settings, paste your Odoo API key and click **Test Connection**.
 
 Generate an API key in Odoo: *Preferences → Account Security → API Keys → New API Key*.
 
-### 4. Run
+### 4. Track Time
 
-```bash
-.build/debug/Clockoo
-```
-
-The clock icon appears in the menu bar. Click it to see your timesheets and search for tasks.
+- Your today's timesheets appear in the popover
+- Use the **search bar** to find tasks, tickets, or recent timesheets
+- Click ▶ to start, ■ to stop, 🗑 to delete
+- Click ↗ to open the task/ticket in Odoo
 
 ## Settings
 
-Open Settings from the popover's gear icon. Configure:
+Open from the popover's gear icon:
 
-- **Accounts** — add, edit, test connection, set API version
+- **Accounts** — add, edit, remove, test connection, pick API version
 - **General** — launch at login, blink when idle
 
-## Stream Deck API
+## Building from Source
 
-Local HTTP server on `http://localhost:19847`:
+```bash
+git clone https://github.com/julian-r/clockoo.git
+cd clockoo
+./build.sh
+open Clockoo.app
+```
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/timers` | GET | List all timesheets with state and elapsed time |
-| `/api/accounts` | GET | List configured accounts |
-| `/api/timers/{id}/toggle` | POST | Start or stop a timer |
-| `/api/timers/{id}/start` | POST | Start a timer |
-| `/api/timers/{id}/stop` | POST | Stop a timer |
-| `/api/timers/{id}/delete` | POST | Delete a timesheet entry |
-
-Timer IDs are in the format `accountId:timesheetId`.
-
-## Search
-
-The search bar in the popover searches across all accounts in parallel:
-
-- **Tasks** — Odoo's `name_search` on `project.task` (fast, same as web UI autocomplete)
-- **Tickets** — `name_search` on `helpdesk.ticket` (requires `helpdesk_timesheet` module)
-- **Recent** — your timesheets from the last 7 days, deduped by task/ticket
-
-Click ▶ to start a timer. For tasks and tickets, this creates a new timesheet and starts the timer automatically.
+Requires macOS 14+ and Swift 5.10+.
 
 ## Architecture
 
@@ -129,17 +95,11 @@ Click ▶ to start a timer. For tasks and tickets, this creates a new timesheet 
 │   │       └─ Legacy: /jsonrpc (execute_kw)  │
 │   └─ Optimistic state management            │
 ├─────────────────────────────────────────────┤
-│ LocalAPIServer (NWListener, port 19847)     │
+│ LocalAPIServer (127.0.0.1:19847)            │
 ├─────────────────────────────────────────────┤
-│ KeychainHelper (Security.framework)         │
-│ ConfigLoader (~/.config/clockoo/)           │
-│ LaunchAtLogin (~/Library/LaunchAgents/)     │
+│ KeychainHelper · ConfigLoader · LaunchAtLogin│
 └─────────────────────────────────────────────┘
 ```
-
-## Concept
-
-See [docs/CONCEPT.md](docs/CONCEPT.md) for the full design document.
 
 ## License
 
