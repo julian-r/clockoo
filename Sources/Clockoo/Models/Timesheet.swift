@@ -34,6 +34,14 @@ enum TimerSource {
         case .standalone: return "Timesheet"
         }
     }
+
+    var sourceId: Int {
+        switch self {
+        case .task(let id, _): return id
+        case .ticket(let id, _): return id
+        case .standalone: return 0
+        }
+    }
 }
 
 /// A timesheet entry from Odoo's account.analytic.line model

@@ -5,9 +5,22 @@ struct TimerPopoverView: View {
     @ObservedObject var accountManager: AccountManager
     var onOpenSettings: (() -> Void)?
 
+    @State private var searchText = ""
+    @State private var isSearching = false
+    @State private var searchResults: [String: [AccountManager.AccountSearchResult]] = [:]
+    @State private var searchTask: Task<Void, Never>?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if accountManager.accounts.isEmpty {
+            // Search bar
+            if !accountManager.accounts.isEmpty {
+                searchBar
+                    .padding(.bottom, 8)
+            }
+
+            if !searchText.isEmpty || isSearching {
+                searchResultsView
+            } else if accountManager.accounts.isEmpty {
                 noAccountsView
             } else if accountManager.allTimesheets.isEmpty && accountManager.errors.isEmpty {
                 noTimersView
@@ -22,6 +35,134 @@ struct TimerPopoverView: View {
         }
         .padding(12)
         .frame(width: 360)
+    }
+
+    // MARK: - Search Bar
+
+    private var searchBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+                .font(.caption)
+            TextField("Search tasks, tickets…", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(.body))
+                .onChange(of: searchText) { _, newValue in
+                    performSearch(query: newValue)
+                }
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                    searchResults = [:]
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+            }
+            if isSearching {
+                ProgressView()
+                    .scaleEffect(0.5)
+                    .frame(width: 16, height: 16)
+            }
+        }
+        .padding(6)
+        .background(Color.primary.opacity(0.05))
+        .cornerRadius(8)
+    }
+
+    private func performSearch(query: String) {
+        searchTask?.cancel()
+        if query.isEmpty {
+            searchResults = [:]
+            isSearching = false
+            return
+        }
+        isSearching = true
+        searchTask = Task {
+            // Debounce 300ms
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            let results = await accountManager.search(query: query)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                searchResults = results
+                isSearching = false
+            }
+        }
+    }
+
+    // MARK: - Search Results
+
+    private var searchResultsView: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            let allResults = flattenedResults
+            if allResults.isEmpty && !isSearching {
+                HStack {
+                    Spacer()
+                    VStack(spacing: 4) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                        Text("No results")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(.vertical, 16)
+            } else {
+                let showHeaders = accountManager.accounts.count > 1
+                let grouped = groupedResults(allResults)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(grouped, id: \.header) { section in
+                            if showHeaders {
+                                Text(section.header)
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.secondary)
+                                    .textCase(.uppercase)
+                                    .padding(.top, 8)
+                                    .padding(.bottom, 4)
+                            }
+                            ForEach(section.items) { item in
+                                SearchResultRow(item: item) {
+                                    accountManager.startTimerOnSearchResult(item)
+                                    searchText = ""
+                                    searchResults = [:]
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 250)
+            }
+        }
+    }
+
+    private var flattenedResults: [AccountManager.AccountSearchResult] {
+        searchResults.values.flatMap { $0 }
+    }
+
+    private struct SearchSection: Identifiable {
+        let header: String
+        let items: [AccountManager.AccountSearchResult]
+        var id: String { header }
+    }
+
+    private func groupedResults(_ results: [AccountManager.AccountSearchResult]) -> [SearchSection] {
+        var sections: [SearchSection] = []
+        // Group by kind across accounts
+        let tasks = results.filter { $0.result.kind == .task }
+        let tickets = results.filter { $0.result.kind == .ticket }
+        let recent = results.filter { $0.result.kind == .recentTimesheet }
+
+        if !tasks.isEmpty { sections.append(SearchSection(header: "Tasks", items: tasks)) }
+        if !tickets.isEmpty { sections.append(SearchSection(header: "Tickets", items: tickets)) }
+        if !recent.isEmpty { sections.append(SearchSection(header: "Recent", items: recent)) }
+        return sections
     }
 
     // MARK: - Timer List
@@ -261,6 +402,56 @@ struct TimerRow: View {
         switch timesheet.state {
         case .running: return "Stop timer"
         case .stopped: return "Start timer"
+        }
+    }
+}
+
+// MARK: - Search Result Row
+
+struct SearchResultRow: View {
+    let item: AccountManager.AccountSearchResult
+    let onStart: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: kindIcon)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.result.name)
+                    .font(.system(.body, design: .default))
+                    .lineLimit(1)
+
+                if let project = item.result.projectName {
+                    Text(project)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            Button(action: onStart) {
+                Image(systemName: "play.fill")
+                    .frame(width: 16, height: 16)
+            }
+            .buttonStyle(.plain)
+            .help("Start timer")
+            .frame(width: 24, height: 24)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 4)
+        .contentShape(Rectangle())
+    }
+
+    private var kindIcon: String {
+        switch item.result.kind {
+        case .task: return "hammer"
+        case .ticket: return "ticket"
+        case .recentTimesheet: return "clock.arrow.circlepath"
         }
     }
 }

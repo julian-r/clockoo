@@ -92,6 +92,35 @@ final class OdooJSONRPCClient: Sendable {
         }
     }
 
+    /// name_search: Odoo's built-in autocomplete search
+    /// Returns [(id, display_name)] pairs
+    func nameSearch(
+        model: String,
+        name: String,
+        domain: [[Any]] = [],
+        limit: Int = 7
+    ) async throws -> [(id: Int, name: String)] {
+        switch apiVersion {
+        case .json2:
+            return try await nameSearchJSON2(model: model, name: name, domain: domain, limit: limit)
+        case .legacy:
+            return try await nameSearchLegacy(model: model, name: name, domain: domain, limit: limit)
+        }
+    }
+
+    /// Create a record and return its ID
+    func create(
+        model: String,
+        values: [String: Any]
+    ) async throws -> Int {
+        switch apiVersion {
+        case .json2:
+            return try await createJSON2(model: model, values: values)
+        case .legacy:
+            return try await createLegacy(model: model, values: values)
+        }
+    }
+
     // MARK: - JSON-2 API (Odoo 19+)
     // POST /json/2/<model>/<method>
     // Authorization: bearer <api-key>
@@ -137,6 +166,29 @@ final class OdooJSONRPCClient: Sendable {
             "ids": ids,
         ]
         _ = try await requestJSON2(model: model, method: method, body: body)
+    }
+
+    private func nameSearchJSON2(
+        model: String, name: String, domain: [[Any]], limit: Int
+    ) async throws -> [(id: Int, name: String)] {
+        let body: [String: Any] = [
+            "name": name,
+            "domain": domain,
+            "limit": limit,
+        ]
+        let result = try await requestJSON2(model: model, method: "name_search", body: body)
+        return parseNameSearchResult(result)
+    }
+
+    private func createJSON2(model: String, values: [String: Any]) async throws -> Int {
+        let body: [String: Any] = [
+            "values": values,
+        ]
+        let result = try await requestJSON2(model: model, method: "create", body: body)
+        // create returns [id] in JSON-2
+        if let ids = result as? [Int], let id = ids.first { return id }
+        if let id = result as? Int { return id }
+        throw OdooError.unexpectedResultType
     }
 
     private func requestJSON2(model: String, method: String, body: [String: Any]) async throws -> Any {
@@ -223,6 +275,25 @@ final class OdooJSONRPCClient: Sendable {
 
     private func callMethodLegacy(model: String, method: String, ids: [Int]) async throws {
         _ = try await executeKwLegacy(model: model, method: method, args: [ids])
+    }
+
+    private func nameSearchLegacy(
+        model: String, name: String, domain: [[Any]], limit: Int
+    ) async throws -> [(id: Int, name: String)] {
+        let result = try await executeKwLegacy(
+            model: model, method: "name_search", args: [],
+            kwargs: ["name": name, "args": domain, "limit": limit]
+        )
+        return parseNameSearchResult(result)
+    }
+
+    private func createLegacy(model: String, values: [String: Any]) async throws -> Int {
+        let result = try await executeKwLegacy(
+            model: model, method: "create", args: [values]
+        )
+        if let id = result as? Int { return id }
+        if let ids = result as? [Int], let id = ids.first { return id }
+        throw OdooError.unexpectedResultType
     }
 
     /// Send a legacy JSON-RPC call and decode the result
@@ -339,6 +410,19 @@ final class OdooJSONRPCClient: Sendable {
         }
 
         return result
+    }
+
+    // MARK: - Shared Helpers
+
+    private func parseNameSearchResult(_ result: Any) -> [(id: Int, name: String)] {
+        guard let pairs = result as? [[Any]] else { return [] }
+        return pairs.compactMap { pair in
+            guard pair.count >= 2,
+                  let id = pair[0] as? Int,
+                  let name = pair[1] as? String
+            else { return nil }
+            return (id: id, name: name)
+        }
     }
 }
 

@@ -226,6 +226,94 @@ final class AccountManager: ObservableObject {
         timesheetsByAccount[timesheet.accountId] = timesheets
     }
 
+    // MARK: - Search
+
+    /// Search result with account context
+    struct AccountSearchResult: Identifiable {
+        let id: String  // unique key: "accountId-kind-sourceId"
+        let accountId: String
+        let result: OdooTimerService.SearchResult
+    }
+
+    /// Search across all accounts in parallel
+    func search(query: String) async -> [String: [AccountSearchResult]] {
+        var allResults: [String: [AccountSearchResult]] = [:]
+
+        await withTaskGroup(of: (String, [AccountSearchResult]).self) { group in
+            for account in accounts {
+                guard let service = timerServices[account.id] else { continue }
+                group.addTask {
+                    var results: [AccountSearchResult] = []
+
+                    // Search tasks
+                    if let tasks = try? await service.searchTasks(query: query) {
+                        results += tasks.map { r in
+                            AccountSearchResult(
+                                id: "\(account.id)-task-\(r.id)",
+                                accountId: account.id,
+                                result: r
+                            )
+                        }
+                    }
+
+                    // Search tickets (if helpdesk available)
+                    if let tickets = try? await service.searchTickets(query: query) {
+                        results += tickets.map { r in
+                            AccountSearchResult(
+                                id: "\(account.id)-ticket-\(r.id)",
+                                accountId: account.id,
+                                result: r
+                            )
+                        }
+                    }
+
+                    // Search recent timesheets
+                    if let recent = try? await service.searchRecentTimesheets(query: query) {
+                        results += recent.map { r in
+                            AccountSearchResult(
+                                id: "\(account.id)-recent-\(r.id)",
+                                accountId: account.id,
+                                result: r
+                            )
+                        }
+                    }
+
+                    return (account.id, results)
+                }
+            }
+            for await (accountId, results) in group {
+                allResults[accountId] = results
+            }
+        }
+
+        return allResults
+    }
+
+    /// Start a timer on a search result
+    func startTimerOnSearchResult(_ result: AccountSearchResult) {
+        guard let service = timerServices[result.accountId] else { return }
+        Task {
+            do {
+                switch result.result.kind {
+                case .task:
+                    try await service.startTimerOnTask(taskId: result.result.id)
+                case .ticket:
+                    try await service.startTimerOnTicket(ticketId: result.result.id)
+                case .recentTimesheet:
+                    if let tsId = result.result.timesheetId {
+                        try await service.startTimer(timesheetId: tsId)
+                    }
+                }
+                // Poll to pick up new timesheet
+                await MainActor.run {
+                    self.pollNow(accountId: result.accountId)
+                }
+            } catch {
+                print("[Search] Start timer failed: \(error)")
+            }
+        }
+    }
+
     /// Get the base URL for an account (for opening web URLs)
     func baseURL(for accountId: String) -> String? {
         accounts.first { $0.id == accountId }?.url
