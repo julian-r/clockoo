@@ -72,7 +72,7 @@ struct SettingsView: View {
                 Button(action: { showDeleteConfirm = true }) {
                     Image(systemName: "minus")
                 }
-                .disabled(selectedAccountId == nil)
+                .disabled(selectedAccountId == nil || selectedAccountId == Self.generalId)
                 .help("Remove account")
 
                 Spacer()
