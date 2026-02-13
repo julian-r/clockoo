@@ -3,6 +3,9 @@ import Foundation
 /// Detected capabilities of the Odoo instance
 struct OdooCapabilities: Sendable {
     var hasHelpdeskTicketId: Bool = false
+    /// Odoo 18 and earlier use timer.timer model separately from timesheets.
+    /// The timesheet is only created when the timer is stopped.
+    var hasTimerTimerModel: Bool = false
 }
 
 /// Service layer for fetching and controlling Odoo timesheets/timers
@@ -50,11 +53,14 @@ final class OdooTimerService: Sendable {
 
         var caps = OdooCapabilities()
 
-        // Probe for helpdesk_ticket_id by requesting it — 500 if not available
+        // Probe for helpdesk_ticket_id by requesting it — error if not available
         caps.hasHelpdeskTicketId = await probeField("helpdesk_ticket_id")
 
+        // Probe for timer.timer model (Odoo 14-18 use this for running timers)
+        caps.hasTimerTimerModel = await probeModel("timer.timer")
+
         capabilities.value = caps
-        print("[OdooTimer:\(accountId)] helpdesk=\(caps.hasHelpdeskTicketId)")
+        print("[OdooTimer:\(accountId)] helpdesk=\(caps.hasHelpdeskTicketId) timer.timer=\(caps.hasTimerTimerModel)")
         return caps
     }
 
@@ -64,6 +70,20 @@ final class OdooTimerService: Sendable {
                 model: Self.timesheetModel,
                 domain: [],
                 fields: ["id", field],
+                limit: 1
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func probeModel(_ model: String) async -> Bool {
+        do {
+            _ = try await client.searchRead(
+                model: model,
+                domain: [],
+                fields: ["id"],
                 limit: 1
             )
             return true
@@ -92,10 +112,12 @@ final class OdooTimerService: Sendable {
     }
 
     /// Fetch all of today's timesheets (running, paused, and stopped)
+    /// Also checks timer.timer for running timers that haven't created a timesheet yet (Odoo 14-18)
     func fetchTodayTimesheets() async throws -> [Timesheet] {
         let uid = try await client.authenticate()
         let today = Self.dateOnlyFormatter.string(from: Date())
         let fields = try await fieldsToFetch()
+        let caps = try await detectCapabilities()
 
         let domain: [[Any]] = [
             ["user_id", "=", uid],
@@ -108,7 +130,95 @@ final class OdooTimerService: Sendable {
             fields: fields
         )
 
-        return records.compactMap { parseTimesheet($0) }
+        var timesheets = records.compactMap { parseTimesheet($0) }
+
+        // Odoo 14-18: check timer.timer for running timers without a timesheet yet
+        if caps.hasTimerTimerModel {
+            let runningTimers = try await fetchRunningTimerTimers(uid: uid)
+            // Only add timers that don't already have a matching timesheet
+            let existingTaskIds = Set(timesheets.compactMap { ts -> Int? in
+                if case .task(let id, _) = ts.source { return id }
+                return nil
+            })
+            let existingTicketIds = Set(timesheets.compactMap { ts -> Int? in
+                if case .ticket(let id, _) = ts.source { return id }
+                return nil
+            })
+            for timer in runningTimers {
+                switch timer.source {
+                case .task(let id, _) where existingTaskIds.contains(id): continue
+                case .ticket(let id, _) where existingTicketIds.contains(id): continue
+                default: timesheets.append(timer)
+                }
+            }
+        }
+
+        return timesheets
+    }
+
+    /// Fetch running timers from timer.timer model (Odoo 14-18)
+    /// These are timers that haven't created a timesheet yet
+    private func fetchRunningTimerTimers(uid: Int) async throws -> [Timesheet] {
+        let timerRecords = try await client.searchRead(
+            model: "timer.timer",
+            domain: [
+                ["user_id", "=", uid],
+                ["timer_start", "!=", false],
+                ["timer_pause", "=", false],
+            ],
+            fields: ["timer_start", "res_model", "res_id"]
+        )
+
+        var timesheets: [Timesheet] = []
+        for record in timerRecords {
+            guard let resModel = record["res_model"] as? String,
+                  let resId = record["res_id"] as? Int,
+                  let timerStart = parseOdooDatetime(record["timer_start"])
+            else { continue }
+
+            // Fetch the parent record name
+            let source: TimerSource
+            let projectName: String?
+
+            if resModel == "project.task" {
+                let taskRecords = try? await client.searchRead(
+                    model: "project.task",
+                    domain: [["id", "=", resId]],
+                    fields: ["display_name", "project_id"],
+                    limit: 1
+                )
+                let name = taskRecords?.first?["display_name"] as? String ?? "Task #\(resId)"
+                let proj = parseManyToOne(taskRecords?.first?["project_id"])
+                source = .task(id: resId, name: name)
+                projectName = proj?.name
+            } else if resModel == "helpdesk.ticket" {
+                let ticketRecords = try? await client.searchRead(
+                    model: "helpdesk.ticket",
+                    domain: [["id", "=", resId]],
+                    fields: ["display_name"],
+                    limit: 1
+                )
+                let name = ticketRecords?.first?["display_name"] as? String ?? "Ticket #\(resId)"
+                source = .ticket(id: resId, name: name)
+                projectName = nil
+            } else {
+                continue
+            }
+
+            // Use negative timer ID as placeholder (no real timesheet exists yet)
+            let timerId = -(record["id"] as? Int ?? resId)
+            timesheets.append(Timesheet(
+                id: timerId,
+                accountId: accountId,
+                name: "",
+                projectName: projectName,
+                source: source,
+                unitAmount: 0,
+                timerStart: timerStart,
+                date: Self.dateOnlyFormatter.string(from: Date())
+            ))
+        }
+        return timesheets
     }
 
     // MARK: - Timer Actions
@@ -121,9 +231,27 @@ final class OdooTimerService: Sendable {
     }
 
     func stopTimer(timesheetId: Int) async throws {
-        try await client.callMethod(
-            model: Self.timesheetModel, method: "action_timer_stop", ids: [timesheetId]
-        )
+        if timesheetId < 0 {
+            // Negative ID = timer.timer placeholder, stop via parent model
+            // The timer.timer record ID is the absolute value
+            let timerRecords = try await client.searchRead(
+                model: "timer.timer",
+                domain: [["id", "=", -timesheetId]],
+                fields: ["res_model", "res_id"],
+                limit: 1
+            )
+            if let record = timerRecords.first,
+               let resModel = record["res_model"] as? String,
+               let resId = record["res_id"] as? Int {
+                try await client.callMethod(
+                    model: resModel, method: "action_timer_stop", ids: [resId]
+                )
+            }
+        } else {
+            try await client.callMethod(
+                model: Self.timesheetModel, method: "action_timer_stop", ids: [timesheetId]
+            )
+        }
     }
 
     // Note: Odoo's task UI only has Start/Stop — no Pause/Resume.

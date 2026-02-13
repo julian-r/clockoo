@@ -52,8 +52,15 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
 </plist>
 PLIST
 
-# Ad-hoc codesign (required for Keychain access without password prompts)
-codesign --force --sign - "$APP_BUNDLE"
+# Codesign — use developer identity if available, otherwise ad-hoc
+IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Development" | head -1 | sed 's/.*"\(.*\)"/\1/')
+if [ -n "$IDENTITY" ]; then
+    codesign --force --sign "$IDENTITY" "$APP_BUNDLE"
+    echo "   Signed with: $IDENTITY"
+else
+    codesign --force --sign - "$APP_BUNDLE"
+    echo "   Signed with: ad-hoc"
+fi
 
 echo "✅ Built $APP_BUNDLE"
 echo "   Run: open $APP_BUNDLE"
