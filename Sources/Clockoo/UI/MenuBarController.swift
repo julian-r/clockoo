@@ -11,6 +11,9 @@ final class MenuBarController {
     private var blinkPhase = false
     private var isBlinking = false
     private var popoverOpen = false
+    private var lastTitle = ""
+    private var lastIcon = ""
+    private var lastTint: NSColor?
     private let accountManager: AccountManager
     private let settingsController: SettingsWindowController
 
@@ -72,44 +75,47 @@ final class MenuBarController {
         // Don't resize while popover is open — it shifts the popover
         guard !popoverOpen else { return }
 
-        if let running = accountManager.runningTimesheet {
-            // Timer is running — show filled clock + elapsed time
-            isBlinking = false
-            button.image = NSImage(
-                systemSymbolName: "clock.fill",
-                accessibilityDescription: "Timer running"
-            )
-            button.title = " \(running.elapsedFormatted)"
-            button.contentTintColor = .systemGreen
-        } else {
-            // No running timer
-            button.title = ""
+        var newTitle = ""
+        var newIcon = "clock"
+        var newTint: NSColor? = nil
 
+        if let running = accountManager.runningTimesheet {
+            isBlinking = false
+            newIcon = "clock.fill"
+            newTitle = " \(running.elapsedFormatted)"
+            newTint = .systemGreen
+        } else {
             if accountManager.blinkWhenIdle && !accountManager.accounts.isEmpty {
-                // Blink: alternate every update cycle (1s)
                 isBlinking = true
                 blinkPhase.toggle()
                 if blinkPhase {
-                    button.image = NSImage(
-                        systemSymbolName: "clock.fill",
-                        accessibilityDescription: "Clockoo — no timer running"
-                    )
-                    button.contentTintColor = .systemOrange
+                    newIcon = "clock.fill"
+                    newTint = .systemOrange
                 } else {
-                    button.image = NSImage(
-                        systemSymbolName: "clock",
-                        accessibilityDescription: "Clockoo"
-                    )
-                    button.contentTintColor = nil
+                    newIcon = "clock"
+                    newTint = nil
                 }
             } else {
                 isBlinking = false
-                button.image = NSImage(
-                    systemSymbolName: "clock",
-                    accessibilityDescription: "Clockoo"
-                )
-                button.contentTintColor = nil
             }
+        }
+
+        // Only update button properties when they actually change
+        // Avoids unnecessary AppKit redraws that cause screen-jumping on multi-monitor
+        if newTitle != lastTitle {
+            button.title = newTitle
+            lastTitle = newTitle
+        }
+        if newIcon != lastIcon {
+            button.image = NSImage(
+                systemSymbolName: newIcon,
+                accessibilityDescription: "Clockoo"
+            )
+            lastIcon = newIcon
+        }
+        if newTint != lastTint {
+            button.contentTintColor = newTint
+            lastTint = newTint
         }
     }
 
