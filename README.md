@@ -12,7 +12,7 @@ Part of the Odoo tooling family: [vodoo](https://github.com/julian-r/vodoo) (CLI
 
 Grab the latest release from **[Releases](https://github.com/julian-r/clockoo/releases)** — download `Clockoo.dmg` or `Clockoo.app.zip`, unzip, and drag to `/Applications`.
 
-> Ad-hoc signed. On first launch macOS may ask you to allow it in System Settings → Privacy & Security.
+> **First launch:** macOS will block the app ("kann nicht geöffnet werden"). Right-click the app → **Open**, or go to System Settings → Privacy & Security → click **Open Anyway**.
 
 ## Features
 
