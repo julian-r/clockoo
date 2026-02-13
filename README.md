@@ -101,6 +101,10 @@ Requires macOS 14+ and Swift 5.10+.
 └─────────────────────────────────────────────┘
 ```
 
+## Vibe Coded
+
+This entire app was vibe coded — not a single line was written by a human. Built entirely through conversation with [Claude Code](https://docs.anthropic.com/en/docs/claude-code) using [pi](https://github.com/nickarrow/pi-coding-agent).
+
 ## License
 
 MIT
