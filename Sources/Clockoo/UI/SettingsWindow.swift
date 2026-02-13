@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var testResult: TestResult?
 
     @State private var blinkWhenIdle: Bool = false
+    @State private var launchAtLogin: Bool = LaunchAtLogin.isEnabled
 
     var body: some View {
         NavigationSplitView {
@@ -131,28 +132,57 @@ struct SettingsView: View {
     private var generalSettingsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Menu Bar")
-                        .font(.headline)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Toggle(isOn: $blinkWhenIdle) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Blink when idle")
-                                Text("Blink the menu bar icon when no timer is running")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .onChange(of: blinkWhenIdle) { _, _ in
-                            persistConfig()
+                // General
+                sectionCard("General") {
+                    Toggle(isOn: $launchAtLogin) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Launch at login")
+                            Text("Start Clockoo automatically when you log in")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
-                    .padding(16)
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                    .onChange(of: launchAtLogin) { _, enabled in
+                        if enabled {
+                            try? LaunchAtLogin.enable()
+                        } else {
+                            LaunchAtLogin.disable()
+                        }
+                    }
+                }
+
+                // Menu Bar
+                sectionCard("Menu Bar") {
+                    Toggle(isOn: $blinkWhenIdle) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Blink when idle")
+                            Text("Blink the menu bar icon when no timer is running")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .onChange(of: blinkWhenIdle) { _, _ in
+                        persistConfig()
+                    }
                 }
             }
             .padding(24)
+        }
+    }
+
+    private func sectionCard<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 10) {
+                content()
+            }
+            .padding(16)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
         }
     }
 
