@@ -78,17 +78,46 @@ final class OdooJSONRPCClient: Sendable {
         }
     }
 
-    /// Call a method on specific record IDs
+    /// Call a method on specific record IDs (ignores return value)
     func callMethod(
         model: String,
         method: String,
         ids: [Int]
     ) async throws {
+        _ = try await callMethodReturning(model: model, method: method, ids: ids)
+    }
+
+    /// Call a method on specific record IDs and return the raw result
+    func callMethodReturning(
+        model: String,
+        method: String,
+        ids: [Int]
+    ) async throws -> Any {
         switch apiVersion {
         case .json2:
-            try await callMethodJSON2(model: model, method: method, ids: ids)
+            return try await callMethodJSON2Returning(model: model, method: method, ids: ids)
         case .legacy:
-            try await callMethodLegacy(model: model, method: method, ids: ids)
+            return try await callMethodLegacyReturning(model: model, method: method, ids: ids)
+        }
+    }
+
+    /// Call a method with custom kwargs
+    func callMethodWithKwargs(
+        model: String,
+        method: String,
+        args: [Any],
+        kwargs: [String: Any] = [:]
+    ) async throws -> Any {
+        switch apiVersion {
+        case .json2:
+            var body: [String: Any] = [:]
+            if let ids = args.first as? [Int] {
+                body["ids"] = ids
+            }
+            for (k, v) in kwargs { body[k] = v }
+            return try await requestJSON2(model: model, method: method, body: body)
+        case .legacy:
+            return try await executeKwLegacy(model: model, method: method, args: args, kwargs: kwargs)
         }
     }
 
@@ -161,11 +190,11 @@ final class OdooJSONRPCClient: Sendable {
         return records
     }
 
-    private func callMethodJSON2(model: String, method: String, ids: [Int]) async throws {
+    private func callMethodJSON2Returning(model: String, method: String, ids: [Int]) async throws -> Any {
         let body: [String: Any] = [
             "ids": ids,
         ]
-        _ = try await requestJSON2(model: model, method: method, body: body)
+        return try await requestJSON2(model: model, method: method, body: body)
     }
 
     private func nameSearchJSON2(
@@ -279,8 +308,8 @@ final class OdooJSONRPCClient: Sendable {
         return records
     }
 
-    private func callMethodLegacy(model: String, method: String, ids: [Int]) async throws {
-        _ = try await executeKwLegacy(model: model, method: method, args: [ids])
+    private func callMethodLegacyReturning(model: String, method: String, ids: [Int]) async throws -> Any {
+        return try await executeKwLegacy(model: model, method: method, args: [ids])
     }
 
     private func nameSearchLegacy(

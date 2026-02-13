@@ -233,24 +233,76 @@ final class OdooTimerService: Sendable {
     func stopTimer(timesheetId: Int) async throws {
         if timesheetId < 0 {
             // Negative ID = timer.timer placeholder, stop via parent model
-            // The timer.timer record ID is the absolute value
             let timerRecords = try await client.searchRead(
                 model: "timer.timer",
                 domain: [["id", "=", -timesheetId]],
                 fields: ["res_model", "res_id"],
                 limit: 1
             )
-            if let record = timerRecords.first,
-               let resModel = record["res_model"] as? String,
-               let resId = record["res_id"] as? Int {
-                try await client.callMethod(
-                    model: resModel, method: "action_timer_stop", ids: [resId]
-                )
-            }
+            guard let record = timerRecords.first,
+                  let resModel = record["res_model"] as? String,
+                  let resId = record["res_id"] as? Int
+            else { return }
+
+            try await stopTimerOnParent(model: resModel, id: resId)
         } else {
-            try await client.callMethod(
+            // Try stopping on the timesheet directly first
+            let result = try await client.callMethodReturning(
                 model: Self.timesheetModel, method: "action_timer_stop", ids: [timesheetId]
             )
+            // If it returns a wizard action, handle it
+            try await handleStopWizardIfNeeded(result)
+        }
+    }
+
+    /// Stop a timer via the parent model (project.task or helpdesk.ticket)
+    /// Handles the confirmation wizard that Odoo 14-18 returns
+    private func stopTimerOnParent(model: String, id: Int) async throws {
+        let result = try await client.callMethodReturning(
+            model: model, method: "action_timer_stop", ids: [id]
+        )
+        try await handleStopWizardIfNeeded(result)
+    }
+
+    /// Odoo 14-18: action_timer_stop returns a wizard action dict instead of stopping.
+    /// Odoo 18: project.task.create.timesheet → save_timesheet()
+    /// Odoo 19: hr.timesheet.stop.timer.confirmation.wizard → action_stop_timer()
+    /// We detect the wizard model and complete it automatically.
+    private func handleStopWizardIfNeeded(_ result: Any) async throws {
+        guard let dict = result as? [String: Any],
+              let resModel = dict["res_model"] as? String,
+              dict["type"] as? String == "ir.actions.act_window"
+        else { return } // Not a wizard, timer was stopped directly
+
+        let context = dict["context"] as? [String: Any] ?? [:]
+
+        if resModel == "project.task.create.timesheet" {
+            // Odoo 14-18: create wizard record then save
+            let taskId = context["active_id"] as? Int ?? 0
+            let timeSpent = context["default_time_spent"] as? Double ?? 0
+            let wizardId = try await client.create(
+                model: resModel,
+                values: ["task_id": taskId, "description": "/", "time_spent": timeSpent]
+            )
+            _ = try await client.callMethodWithKwargs(
+                model: resModel, method: "save_timesheet", args: [[wizardId]],
+                kwargs: ["context": context]
+            )
+            print("[Timer] Completed Odoo 18 stop wizard for task \(taskId)")
+        } else if resModel == "hr.timesheet.stop.timer.confirmation.wizard" {
+            // Odoo 19: create wizard then confirm
+            let timesheetId = context["default_timesheet_id"] as? Int ?? 0
+            let wizardId = try await client.create(
+                model: resModel,
+                values: ["timesheet_id": timesheetId]
+            )
+            _ = try await client.callMethodWithKwargs(
+                model: resModel, method: "action_stop_timer", args: [[wizardId]],
+                kwargs: ["context": context]
+            )
+            print("[Timer] Completed Odoo 19 stop wizard for timesheet \(timesheetId)")
+        } else {
+            print("[Timer] Unknown stop wizard: \(resModel), ignoring")
         }
     }
 
