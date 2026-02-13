@@ -16,19 +16,32 @@ A lightweight macOS menu bar app that shows active Odoo timesheets/timers and le
 
 ### Timesheets: `account.analytic.line`
 
-The core model for time tracking in Odoo. Key fields:
+The core model for time tracking in Odoo. **All timers** — whether started from a project task or a helpdesk ticket — create entries here. Key fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | int | Record ID |
 | `name` | str | Description |
 | `project_id` | many2one | Project reference |
-| `task_id` | many2one | Task reference |
+| `task_id` | many2one | Task reference (project tasks) |
+| `helpdesk_ticket_id` | many2one | Helpdesk ticket reference |
 | `unit_amount` | float | Duration in hours |
 | `date` | date | Timesheet date |
 | `user_id` | many2one | Assigned user |
 | `timer_start` | datetime | When the timer was started (if running) |
 | `timer_pause` | datetime | When the timer was paused |
+
+### Timer Sources
+
+Timers can originate from three places in Odoo:
+
+| Source | Model | Timesheet link field |
+|--------|-------|---------------------|
+| **Project Task** | `project.task` | `task_id` |
+| **Helpdesk Ticket** | `helpdesk.ticket` | `helpdesk_ticket_id` |
+| **Standalone** | (direct timesheet) | neither |
+
+Clockoo queries `account.analytic.line` to get **all** active timers regardless of source, and displays the origin (task name, ticket name, or project name) for context.
 
 ### Timer Detection
 
@@ -41,6 +54,10 @@ domain: [
     ("user_id", "=", uid),
     ("timer_start", "!=", False),
     ("date", "=", today)
+]
+fields: [
+    "name", "project_id", "task_id", "helpdesk_ticket_id",
+    "unit_amount", "timer_start", "timer_pause", "date"
 ]
 ```
 
@@ -57,6 +74,13 @@ These can be called via XML-RPC:
 execute_kw(db, uid, password, "account.analytic.line", "action_timer_start", [[line_id]])
 ```
 
+### Opening in Odoo Web
+
+Right-click / secondary action should open the **source record** (not the timesheet line):
+- If `task_id` is set → open `project.task` form
+- If `helpdesk_ticket_id` is set → open `helpdesk.ticket` form
+- Otherwise → open `account.analytic.line` form
+
 ## UI Design
 
 ### Menu Bar Icon
@@ -69,9 +93,9 @@ execute_kw(db, uid, password, "account.analytic.line", "action_timer_start", [[l
 
 ```
 ┌──────────────────────────────────────┐
-│  ▶ ODP-142 Fix login bug      1:23  │  ← running (highlighted, green accent)
-│  ⏸ ODP-89  Review PR          0:45  │  ← paused (dimmed)
-│  ■ ODP-201 Deploy staging     2:10  │  ← stopped (today's entry)
+│  ▶ 🔧 ODP-142 Fix login bug   1:23  │  ← running task (green accent)
+│  ⏸ 🎫 TKT-89 Printer issue   0:45  │  ← paused ticket (dimmed)
+│  ■ 🔧 ODP-201 Deploy staging  2:10  │  ← stopped task
 │──────────────────────────────────────│
 │  ⏱ Start new timer...               │
 │  ──────────────────────────────────  │
