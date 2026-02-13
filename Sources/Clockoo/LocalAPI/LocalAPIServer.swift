@@ -20,7 +20,10 @@ final class LocalAPIServer {
         #if canImport(Network)
         do {
             let nwPort = NWEndpoint.Port(rawValue: port)!
-            let nwListener = try NWListener(using: .tcp, on: nwPort)
+            // Bind to localhost only — never expose to the network
+            let params = NWParameters.tcp
+            params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: nwPort)
+            let nwListener = try NWListener(using: params)
 
             let port = self.port
             nwListener.stateUpdateHandler = { state in
