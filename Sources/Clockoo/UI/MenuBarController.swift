@@ -7,6 +7,8 @@ final class MenuBarController {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var updateTimer: Timer?
+    private var blinkTimer: Timer?
+    private var blinkVisible = true
     private let accountManager: AccountManager
     private let settingsController: SettingsWindowController
 
@@ -48,23 +50,18 @@ final class MenuBarController {
                 onOpenSettings: settingsAction
             )
         )
-        // Let SwiftUI size the popover content naturally
         hostingController.sizingOptions = .preferredContentSize
         popover.contentViewController = hostingController
     }
 
     private func startDisplayUpdates() {
-        // Update menu bar text every 30 seconds
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) {
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) {
             [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
                 self.updateMenuBarDisplay()
             }
         }
-
-        // Also observe account manager changes
-        // We'll update on a regular interval since we need live elapsed time
     }
 
     func updateMenuBarDisplay() {
@@ -72,32 +69,55 @@ final class MenuBarController {
 
         if let running = accountManager.runningTimesheet {
             // Timer is running — show filled clock + elapsed time
+            stopBlinking()
             button.image = NSImage(
                 systemSymbolName: "clock.fill",
                 accessibilityDescription: "Timer running"
             )
             button.title = " \(running.elapsedFormatted)"
-
-            // Tint the image green
-            if let image = button.image {
-                let tinted = image.copy() as! NSImage
-                tinted.isTemplate = false
-                // Use the template image with accent appearance
-                button.image = NSImage(
-                    systemSymbolName: "clock.fill",
-                    accessibilityDescription: "Timer running"
-                )
-                button.contentTintColor = .systemGreen
-            }
+            button.contentTintColor = .systemGreen
+            button.appearsDisabled = false
         } else {
-            // No running timer — outline clock, no text
-            button.image = NSImage(
-                systemSymbolName: "clock",
-                accessibilityDescription: "Clockoo"
-            )
+            // No running timer
             button.title = ""
             button.contentTintColor = nil
+
+            if accountManager.blinkWhenIdle && !accountManager.accounts.isEmpty {
+                startBlinking()
+            } else {
+                stopBlinking()
+                button.image = NSImage(
+                    systemSymbolName: "clock",
+                    accessibilityDescription: "Clockoo"
+                )
+                button.appearsDisabled = false
+            }
         }
+    }
+
+    // MARK: - Blink
+
+    private func startBlinking() {
+        guard blinkTimer == nil else { return }
+        blinkVisible = true
+        blinkTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) {
+            [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.blinkVisible.toggle()
+                self.statusItem.button?.image = NSImage(
+                    systemSymbolName: self.blinkVisible ? "clock" : "clock.fill",
+                    accessibilityDescription: "Clockoo — no timer running"
+                )
+                self.statusItem.button?.contentTintColor = self.blinkVisible ? nil : .systemOrange
+            }
+        }
+    }
+
+    private func stopBlinking() {
+        blinkTimer?.invalidate()
+        blinkTimer = nil
+        blinkVisible = true
     }
 
     @objc private func togglePopover() {
@@ -106,11 +126,8 @@ final class MenuBarController {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            // Refresh data when opening
             accountManager.pollAll()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-
-            // Make popover the key window so it can receive events
             popover.contentViewController?.view.window?.makeKey()
         }
     }

@@ -51,7 +51,6 @@ struct TimerPopoverView: View {
                         TimerRow(
                             timesheet: timesheet,
                             onToggle: { accountManager.toggleTimer(timesheet: timesheet) },
-                            onStop: { accountManager.stopTimer(timesheet: timesheet) },
                             onOpen: { openInBrowser(timesheet: timesheet) }
                         )
                     }
@@ -104,7 +103,7 @@ struct TimerPopoverView: View {
             Image(systemName: "clock")
                 .font(.largeTitle)
                 .foregroundStyle(.secondary)
-            Text("No active timers today")
+            Text("No timesheets today")
                 .font(.headline)
             Text("Start a timer in Odoo to see it here")
                 .font(.caption)
@@ -166,7 +165,6 @@ struct TimerPopoverView: View {
 struct TimerRow: View {
     let timesheet: Timesheet
     let onToggle: () -> Void
-    let onStop: () -> Void
     let onOpen: () -> Void
 
     var body: some View {
@@ -202,22 +200,13 @@ struct TimerRow: View {
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(timesheet.state == .running ? .primary : .secondary)
 
-            // Action buttons
+            // Action button: start or stop
             Button(action: onToggle) {
                 Image(systemName: toggleIcon)
                     .font(.caption)
             }
             .buttonStyle(.plain)
             .help(toggleHelp)
-
-            if timesheet.state == .running || timesheet.state == .paused {
-                Button(action: onStop) {
-                    Image(systemName: "stop.fill")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .help("Stop timer")
-            }
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 4)
@@ -231,23 +220,20 @@ struct TimerRow: View {
     private var stateColor: Color {
         switch timesheet.state {
         case .running: return .green
-        case .paused: return .orange
         case .stopped: return .gray.opacity(0.3)
         }
     }
 
     private var toggleIcon: String {
         switch timesheet.state {
-        case .running: return "pause.fill"
-        case .paused: return "play.fill"
+        case .running: return "stop.fill"
         case .stopped: return "play.fill"
         }
     }
 
     private var toggleHelp: String {
         switch timesheet.state {
-        case .running: return "Pause timer"
-        case .paused: return "Resume timer"
+        case .running: return "Stop timer"
         case .stopped: return "Start timer"
         }
     }

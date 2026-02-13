@@ -34,6 +34,19 @@ struct AccountConfig: Codable, Identifiable {
 /// Root config file structure
 struct ClockooConfig: Codable {
     let accounts: [AccountConfig]
+    /// Blink menu bar icon when no timer is running
+    var blinkWhenIdle: Bool
+
+    init(accounts: [AccountConfig], blinkWhenIdle: Bool = false) {
+        self.accounts = accounts
+        self.blinkWhenIdle = blinkWhenIdle
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accounts = try container.decode([AccountConfig].self, forKey: .accounts)
+        blinkWhenIdle = try container.decodeIfPresent(Bool.self, forKey: .blinkWhenIdle) ?? false
+    }
 }
 
 /// Loads accounts from ~/.config/clockoo/accounts.json
@@ -44,12 +57,15 @@ enum ConfigLoader {
     static let configFile = configDir.appendingPathComponent("accounts.json")
 
     static func load() throws -> [AccountConfig] {
+        try loadConfig().accounts
+    }
+
+    static func loadConfig() throws -> ClockooConfig {
         guard FileManager.default.fileExists(atPath: configFile.path) else {
-            return []
+            return ClockooConfig(accounts: [])
         }
         let data = try Data(contentsOf: configFile)
-        let config = try JSONDecoder().decode(ClockooConfig.self, from: data)
-        return config.accounts
+        return try JSONDecoder().decode(ClockooConfig.self, from: data)
     }
 
     /// Create config directory and a sample config if none exists

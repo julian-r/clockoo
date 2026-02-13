@@ -159,7 +159,6 @@ final class LocalAPIServer {
         case "toggle": accountManager.toggleTimer(timesheet: timesheet)
         case "start": accountManager.startTimer(timesheet: timesheet)
         case "stop": accountManager.stopTimer(timesheet: timesheet)
-        case "pause": accountManager.pauseTimer(timesheet: timesheet)
         default: break
         }
 

@@ -6,13 +6,14 @@ final class AccountManager: ObservableObject {
     @Published var accounts: [AccountConfig] = []
     @Published var timesheetsByAccount: [String: [Timesheet]] = [:]
     @Published var errors: [String: String] = [:]
+    @Published var blinkWhenIdle: Bool = false
 
     private var timerServices: [String: OdooTimerService] = [:]
     private var pollTimers: [String: Timer] = [:]
     private var displayTimer: Timer?
 
     /// The poll interval in seconds
-    var pollInterval: TimeInterval = 60
+    var pollInterval: TimeInterval = 5
 
     /// All timesheets across all accounts, sorted: running first, then paused, then stopped
     var allTimesheets: [Timesheet] {
@@ -20,8 +21,7 @@ final class AccountManager: ObservableObject {
             let order: (TimerState) -> Int = { state in
                 switch state {
                 case .running: return 0
-                case .paused: return 1
-                case .stopped: return 2
+                case .stopped: return 1
                 }
             }
             return order(a.state) < order(b.state)
@@ -40,7 +40,9 @@ final class AccountManager: ObservableObject {
 
     func loadAccounts() {
         do {
-            accounts = try ConfigLoader.load()
+            let config = try ConfigLoader.loadConfig()
+            accounts = config.accounts
+            blinkWhenIdle = config.blinkWhenIdle
             for account in accounts {
                 setupService(for: account)
             }
@@ -82,7 +84,7 @@ final class AccountManager: ObservableObject {
         }
 
         // Update display every 30s for live elapsed time
-        displayTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) {
+        displayTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) {
             [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
@@ -99,15 +101,22 @@ final class AccountManager: ObservableObject {
     }
 
     func pollNow(accountId: String) {
-        guard let service = timerServices[accountId] else { return }
+        guard let service = timerServices[accountId] else {
+            print("[Poll:\(accountId)] No service — missing API key?")
+            return
+        }
         Task {
             do {
-                let timesheets = try await service.fetchActiveTimesheets()
+                let timesheets = try await service.fetchTodayTimesheets()
+                let running = timesheets.filter { $0.state == .running }.count
+                let stopped = timesheets.filter { $0.state == .stopped }.count
+                print("[Poll:\(accountId)] \(timesheets.count) timesheets (running=\(running) stopped=\(stopped))")
                 await MainActor.run {
                     self.timesheetsByAccount[accountId] = timesheets
                     self.errors.removeValue(forKey: accountId)
                 }
             } catch {
+                print("[Poll:\(accountId)] Error: \(error)")
                 await MainActor.run {
                     self.errors[accountId] = error.localizedDescription
                 }
@@ -139,20 +148,10 @@ final class AccountManager: ObservableObject {
         }
     }
 
-    func pauseTimer(timesheet: Timesheet) {
-        guard let service = timerServices[timesheet.accountId] else { return }
-        Task {
-            try await service.pauseTimer(timesheetId: timesheet.id)
-            pollNow(accountId: timesheet.accountId)
-        }
-    }
-
     func toggleTimer(timesheet: Timesheet) {
         switch timesheet.state {
         case .running:
-            pauseTimer(timesheet: timesheet)
-        case .paused:
-            startTimer(timesheet: timesheet)
+            stopTimer(timesheet: timesheet)
         case .stopped:
             startTimer(timesheet: timesheet)
         }

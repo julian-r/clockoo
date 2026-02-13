@@ -10,6 +10,8 @@ struct SettingsView: View {
     @State private var showDeleteConfirm = false
     @State private var testResult: TestResult?
 
+    @State private var blinkWhenIdle: Bool = false
+
     var body: some View {
         NavigationSplitView {
             sidebar
@@ -42,11 +44,20 @@ struct SettingsView: View {
 
     // MARK: - Sidebar
 
+    private static let generalId = "__general__"
+
     private var sidebar: some View {
         List(selection: $selectedAccountId) {
-            ForEach(accounts) { account in
-                accountRow(account)
-                    .tag(account.id)
+            Section("General") {
+                Label("Preferences", systemImage: "gearshape")
+                    .tag(Self.generalId)
+            }
+
+            Section("Accounts") {
+                ForEach(accounts) { account in
+                    accountRow(account)
+                        .tag(account.id)
+                }
             }
         }
         .listStyle(.sidebar)
@@ -96,7 +107,9 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if editingAccount != nil {
+        if selectedAccountId == Self.generalId {
+            generalSettingsView
+        } else if editingAccount != nil {
             AccountEditorView(
                 account: Binding(
                     get: { editingAccount! },
@@ -115,6 +128,34 @@ struct SettingsView: View {
         }
     }
 
+    private var generalSettingsView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Menu Bar")
+                        .font(.headline)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle(isOn: $blinkWhenIdle) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Blink when idle")
+                                Text("Blink the menu bar icon when no timer is running")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .onChange(of: blinkWhenIdle) { _, _ in
+                            persistConfig()
+                        }
+                    }
+                    .padding(16)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                }
+            }
+            .padding(24)
+        }
+    }
+
     // MARK: - Actions
 
     private func loadAccounts() {
@@ -130,8 +171,8 @@ struct SettingsView: View {
                 apiVersion: config.apiVersion
             )
         }
-        selectedAccountId = accounts.first?.id
-        syncEditingAccount(to: selectedAccountId)
+        blinkWhenIdle = accountManager.blinkWhenIdle
+        selectedAccountId = Self.generalId
     }
 
     private func addAccount() {
@@ -157,45 +198,16 @@ struct SettingsView: View {
 
         KeychainHelper.deleteAPIKey(for: selectedId)
         accounts.remove(at: index)
-        selectedAccountId = accounts.first?.id
         editingAccount = nil
-        saveAll()
+        selectedAccountId = accounts.first?.id
+        syncEditingAccount(to: selectedAccountId)
+
+        // Persist without going through saveAll (no editingAccount to write back)
+        persistConfig()
     }
 
-    /// Write editingAccount back into the accounts array, sanitize, and persist
-    private func saveAll() {
-        // Write the editing copy back into the array
-        if var edited = editingAccount,
-           let index = accounts.firstIndex(where: { $0.id == selectedAccountId })
-        {
-            // Sanitize
-            edited.url = edited.url
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            edited.database = edited.database
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            edited.username = edited.username
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            edited.id = edited.id
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-                .replacingOccurrences(of: " ", with: "-")
-            edited.label = edited.label
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            // Save API key to Keychain if provided
-            let key = edited.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !key.isEmpty {
-                try? KeychainHelper.setAPIKey(key, for: edited.id)
-                edited.apiKey = ""  // Clear from memory after storing
-                edited.hasKeychainKey = true
-            }
-
-            accounts[index] = edited
-            editingAccount = edited
-        }
-
-        // Save config (without secrets)
+    /// Write current accounts array to disk and reload the manager
+    private func persistConfig() {
         let configs = accounts.map { acc in
             AccountConfig(
                 id: acc.id,
@@ -207,7 +219,7 @@ struct SettingsView: View {
             )
         }
 
-        let clockooConfig = ClockooConfig(accounts: configs)
+        let clockooConfig = ClockooConfig(accounts: configs, blinkWhenIdle: blinkWhenIdle)
         do {
             ConfigLoader.ensureConfigDir()
             let encoder = JSONEncoder()
@@ -227,6 +239,53 @@ struct SettingsView: View {
         for i in accounts.indices {
             accounts[i].hasKeychainKey = KeychainHelper.getAPIKey(for: accounts[i].id) != nil
         }
+    }
+
+    /// Write editingAccount back into the accounts array, sanitize, and persist
+    private func saveAll() {
+        // Write the editing copy back into the array
+        if var edited = editingAccount,
+           let index = accounts.firstIndex(where: { $0.id == selectedAccountId })
+        {
+            let oldId = edited.id
+
+            // Sanitize
+            edited.url = edited.url
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            edited.database = edited.database
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            edited.username = edited.username
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            edited.id = edited.id
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .replacingOccurrences(of: " ", with: "-")
+            edited.label = edited.label
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // If ID changed, migrate the Keychain entry
+            if oldId != edited.id {
+                if let existingKey = KeychainHelper.getAPIKey(for: oldId) {
+                    try? KeychainHelper.setAPIKey(existingKey, for: edited.id)
+                    KeychainHelper.deleteAPIKey(for: oldId)
+                }
+            }
+
+            // Save API key to Keychain if provided
+            let key = edited.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !key.isEmpty {
+                try? KeychainHelper.setAPIKey(key, for: edited.id)
+                edited.apiKey = ""  // Clear from memory after storing
+                edited.hasKeychainKey = true
+            }
+
+            accounts[index] = edited
+            selectedAccountId = edited.id
+            editingAccount = edited
+        }
+
+        persistConfig()
     }
 
     private func testConnection(account: EditableAccount) {

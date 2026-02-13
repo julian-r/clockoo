@@ -15,7 +15,7 @@ final class OdooTimerService: Sendable {
     /// Base fields that always exist on account.analytic.line
     private static let baseFields = [
         "name", "project_id", "task_id",
-        "unit_amount", "timer_start", "timer_pause", "date",
+        "unit_amount", "timer_start", "date",
     ]
 
     private let capabilities = ManagedAtomic<OdooCapabilities?>(nil)
@@ -126,17 +126,8 @@ final class OdooTimerService: Sendable {
         )
     }
 
-    func pauseTimer(timesheetId: Int) async throws {
-        try await client.callMethod(
-            model: Self.timesheetModel, method: "action_timer_pause", ids: [timesheetId]
-        )
-    }
-
-    func resumeTimer(timesheetId: Int) async throws {
-        try await client.callMethod(
-            model: Self.timesheetModel, method: "action_timer_resume", ids: [timesheetId]
-        )
-    }
+    // Note: Odoo's task UI only has Start/Stop — no Pause/Resume.
+    // The timer.mixin has pause/resume methods but the task form doesn't expose them.
 
     // MARK: - Parsing
 
@@ -148,7 +139,6 @@ final class OdooTimerService: Sendable {
         let source = parseSource(record)
         let unitAmount = record["unit_amount"] as? Double ?? 0
         let timerStart = parseOdooDatetime(record["timer_start"])
-        let timerPause = parseOdooDatetime(record["timer_pause"])
         let date = record["date"] as? String ?? ""
 
         return Timesheet(
@@ -159,7 +149,6 @@ final class OdooTimerService: Sendable {
             source: source,
             unitAmount: unitAmount,
             timerStart: timerStart,
-            timerPause: timerPause,
             date: date
         )
     }

@@ -1,15 +1,13 @@
 import Foundation
 
-/// Timer state derived from Odoo's timer_start and timer_pause fields
+/// Timer state derived from Odoo's timer_start field
 enum TimerState {
     case running
-    case paused
     case stopped
 
     var icon: String {
         switch self {
         case .running: return "▶"
-        case .paused: return "⏸"
         case .stopped: return "■"
         }
     }
@@ -47,12 +45,10 @@ struct Timesheet: Identifiable {
     let source: TimerSource
     let unitAmount: Double
     let timerStart: Date?
-    let timerPause: Date?
     let date: String
 
     var state: TimerState {
         guard timerStart != nil else { return .stopped }
-        if timerPause != nil { return .paused }
         return .running
     }
 
@@ -60,10 +56,6 @@ struct Timesheet: Identifiable {
     var elapsed: TimeInterval {
         let baseSeconds = unitAmount * 3600
         guard let start = timerStart else { return baseSeconds }
-        if let pause = timerPause {
-            // Timer is paused — elapsed = base + (pause - start)
-            return baseSeconds + pause.timeIntervalSince(start)
-        }
         // Timer is running — elapsed = base + (now - start)
         return baseSeconds + Date().timeIntervalSince(start)
     }
@@ -88,7 +80,6 @@ struct Timesheet: Identifiable {
     }
 
     /// URL to open the source record in Odoo web
-    /// Uses the same format as vodoo: /web#id=X&model=Y&view_type=form
     func webURL(baseURL: String) -> URL? {
         let base = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let model: String
