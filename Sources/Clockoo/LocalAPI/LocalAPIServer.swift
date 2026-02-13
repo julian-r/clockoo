@@ -22,10 +22,11 @@ final class LocalAPIServer {
             let nwPort = NWEndpoint.Port(rawValue: port)!
             let nwListener = try NWListener(using: .tcp, on: nwPort)
 
+            let port = self.port
             nwListener.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    print("[LocalAPI] Listening on port \(self.port)")
+                    print("[LocalAPI] Listening on port \(port)")
                 case .failed(let error):
                     print("[LocalAPI] Failed: \(error)")
                 default:
