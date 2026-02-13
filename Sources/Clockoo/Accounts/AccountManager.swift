@@ -160,6 +160,23 @@ final class AccountManager: ObservableObject {
         }
     }
 
+    func deleteTimesheet(timesheet: Timesheet) {
+        guard let service = timerServices[timesheet.accountId] else { return }
+        // Optimistic: remove from local state immediately
+        if var timesheets = timesheetsByAccount[timesheet.accountId] {
+            timesheets.removeAll { $0.id == timesheet.id }
+            timesheetsByAccount[timesheet.accountId] = timesheets
+        }
+        Task {
+            do {
+                try await service.deleteTimesheet(timesheetId: timesheet.id)
+            } catch {
+                print("[Timer] Delete failed: \(error)")
+            }
+            pollNow(accountId: timesheet.accountId)
+        }
+    }
+
     func toggleTimer(timesheet: Timesheet) {
         switch timesheet.state {
         case .running:

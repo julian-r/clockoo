@@ -51,6 +51,7 @@ struct TimerPopoverView: View {
                         TimerRow(
                             timesheet: timesheet,
                             onToggle: { accountManager.toggleTimer(timesheet: timesheet) },
+                            onDelete: { accountManager.deleteTimesheet(timesheet: timesheet) },
                             onOpen: { openInBrowser(timesheet: timesheet) }
                         )
                     }
@@ -165,6 +166,7 @@ struct TimerPopoverView: View {
 struct TimerRow: View {
     let timesheet: Timesheet
     let onToggle: () -> Void
+    let onDelete: () -> Void
     let onOpen: () -> Void
 
     var body: some View {
@@ -200,13 +202,21 @@ struct TimerRow: View {
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(timesheet.state == .running ? .primary : .secondary)
 
-            // Action button: start or stop
+            // Action buttons
             Button(action: onToggle) {
                 Image(systemName: toggleIcon)
                     .font(.caption)
             }
             .buttonStyle(.plain)
             .help(toggleHelp)
+
+            Button(action: onDelete) {
+                Image(systemName: "trash")
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Delete entry")
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 4)
@@ -214,6 +224,8 @@ struct TimerRow: View {
         .opacity(timesheet.state == .stopped ? 0.6 : 1.0)
         .contextMenu {
             Button("Open in Odoo") { onOpen() }
+            Divider()
+            Button("Delete Entry", role: .destructive) { onDelete() }
         }
     }
 

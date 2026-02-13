@@ -129,6 +129,12 @@ final class OdooTimerService: Sendable {
     // Note: Odoo's task UI only has Start/Stop — no Pause/Resume.
     // The timer.mixin has pause/resume methods but the task form doesn't expose them.
 
+    func deleteTimesheet(timesheetId: Int) async throws {
+        try await client.callMethod(
+            model: Self.timesheetModel, method: "unlink", ids: [timesheetId]
+        )
+    }
+
     // MARK: - Parsing
 
     private func parseTimesheet(_ record: [String: Any]) -> Timesheet? {
