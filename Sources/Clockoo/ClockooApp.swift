@@ -80,8 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings.showSettings()
         }
 
-        // Start polling Odoo
-        manager.startPolling()
+        // Connect to Odoo accounts (auto-detects API version) and start polling
+        manager.connectAndStartPolling()
 
         // Start local API server for Stream Deck integration
         let server = LocalAPIServer(accountManager: manager)

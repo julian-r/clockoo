@@ -197,8 +197,7 @@ struct SettingsView: View {
                 database: config.database,
                 username: config.username,
                 apiKey: "",
-                hasKeychainKey: KeychainHelper.getAPIKey(for: config.id) != nil,
-                apiVersion: config.apiVersion
+                hasKeychainKey: KeychainHelper.getAPIKey(for: config.id) != nil
             )
         }
         blinkWhenIdle = accountManager.blinkWhenIdle
@@ -214,8 +213,7 @@ struct SettingsView: View {
             database: "",
             username: "",
             apiKey: "",
-            hasKeychainKey: false,
-            apiVersion: .json2
+            hasKeychainKey: false
         )
         accounts.append(account)
         selectedAccountId = newId
@@ -244,8 +242,7 @@ struct SettingsView: View {
                 label: acc.label,
                 url: acc.url,
                 database: acc.database,
-                username: acc.username,
-                apiVersion: acc.apiVersion
+                username: acc.username
             )
         }
 
@@ -260,10 +257,10 @@ struct SettingsView: View {
             print("[Settings] Failed to save config: \(error)")
         }
 
-        // Reload accounts in the manager
+        // Reload accounts and reconnect
         accountManager.stopPolling()
         accountManager.loadAccounts()
-        accountManager.startPolling()
+        accountManager.connectAndStartPolling()
 
         // Refresh keychain indicators in sidebar
         for i in accounts.indices {
@@ -339,17 +336,15 @@ struct SettingsView: View {
             return
         }
 
-        let client = OdooJSONRPCClient(
-            url: account.url,
-            database: account.database,
-            username: account.username,
-            apiKey: apiKey,
-            apiVersion: account.apiVersion
-        )
-
         Task {
             do {
-                let uid = try await client.authenticate()
+                let conn = await makeOdooConnection(
+                    url: account.url,
+                    database: account.database,
+                    username: account.username,
+                    apiKey: apiKey
+                )
+                let uid = try await conn.client.authenticate()
                 await MainActor.run {
                     testResult = .success("Connected! User ID: \(uid)")
                 }
@@ -404,13 +399,6 @@ struct AccountEditorView: View {
                     LabeledField("Username") {
                         TextField("user@example.com", text: $account.username)
                             .textFieldStyle(.roundedBorder)
-                    }
-                    LabeledField("API Version") {
-                        Picker("", selection: $account.apiVersion) {
-                            Text("JSON-2 (Odoo 19+, recommended)").tag(OdooAPIVersion.json2)
-                            Text("Legacy JSON-RPC (Odoo 14–18)").tag(OdooAPIVersion.legacy)
-                        }
-                        .pickerStyle(.radioGroup)
                     }
                 }
 
@@ -529,7 +517,6 @@ struct EditableAccount: Identifiable {
     var username: String
     var apiKey: String
     var hasKeychainKey: Bool
-    var apiVersion: OdooAPIVersion
 }
 
 enum TestResult {

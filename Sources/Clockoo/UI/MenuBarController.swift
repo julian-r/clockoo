@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Manages the NSStatusItem (menu bar icon + text) and the popover
 @MainActor
-final class MenuBarController {
+final class MenuBarController: NSObject, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var updateTimer: Timer?
@@ -28,6 +28,8 @@ final class MenuBarController {
         iconClock = NSImage(systemSymbolName: "clock", accessibilityDescription: "Clockoo")!
         iconClockFill = NSImage(systemSymbolName: "clock.fill", accessibilityDescription: "Clockoo")!
 
+        super.init()
+
         setupStatusItem()
         setupPopover()
         startDisplayUpdates()
@@ -50,6 +52,7 @@ final class MenuBarController {
         popover = NSPopover()
         popover.behavior = .transient
         popover.animates = true
+        popover.delegate = self
         let settingsAction = { [weak self] in
             self?.popover.performClose(nil)
             self?.settingsController.showSettings()
@@ -125,15 +128,22 @@ final class MenuBarController {
 
         if popover.isShown {
             popover.performClose(nil)
-            popoverOpen = false
-            statusItem.length = NSStatusItem.variableLength
-            updateMenuBarDisplay()
         } else {
             accountManager.pollAll()
             popoverOpen = true
             statusItem.length = button.frame.width
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
+        }
+    }
+
+    // MARK: - NSPopoverDelegate
+
+    nonisolated func popoverDidClose(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            popoverOpen = false
+            statusItem.length = NSStatusItem.variableLength
+            updateMenuBarDisplay()
         }
     }
 }

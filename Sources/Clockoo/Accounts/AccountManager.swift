@@ -43,30 +43,46 @@ final class AccountManager: ObservableObject {
             let config = try ConfigLoader.loadConfig()
             accounts = config.accounts
             blinkWhenIdle = config.blinkWhenIdle
-            for account in accounts {
-                setupService(for: account)
-            }
         } catch {
             print("Failed to load accounts: \(error)")
         }
     }
 
-    private func setupService(for account: AccountConfig) {
+    /// Connect to all accounts (auto-detects API version), then start polling.
+    /// Call this after loadAccounts().
+    func connectAndStartPolling() {
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                for account in accounts {
+                    group.addTask { [self] in
+                        await self.setupService(for: account)
+                    }
+                }
+            }
+            // All services are ready — now start polling
+            startPolling()
+        }
+    }
+
+    private func setupService(for account: AccountConfig) async {
         guard let apiKey = KeychainHelper.getAPIKey(for: account.id) else {
-            errors[account.id] = "No API key in Keychain for '\(account.id)'. Add it via Settings."
+            await MainActor.run {
+                errors[account.id] = "No API key in Keychain for '\(account.id)'. Add it via Settings."
+            }
             return
         }
 
-        let client = OdooJSONRPCClient(
+        let conn = await makeOdooConnection(
             url: account.url,
             database: account.database,
             username: account.username,
-            apiKey: apiKey,
-            apiVersion: account.apiVersion
+            apiKey: apiKey
         )
-        let service = OdooTimerService(client: client, accountId: account.id)
-        timerServices[account.id] = service
-        errors.removeValue(forKey: account.id)
+        let service = OdooTimerService(client: conn.client, backend: conn.backend, accountId: account.id)
+        await MainActor.run {
+            timerServices[account.id] = service
+            errors.removeValue(forKey: account.id)
+        }
     }
 
     func startPolling() {
@@ -138,7 +154,7 @@ final class AccountManager: ObservableObject {
         optimisticUpdate(timesheet: timesheet, running: true)
         Task {
             do {
-                try await service.startTimer(timesheetId: timesheet.id)
+                try await service.startTimer(timesheet: timesheet)
             } catch {
                 print("[Timer] Start failed: \(error)")
             }
@@ -152,7 +168,7 @@ final class AccountManager: ObservableObject {
         optimisticUpdate(timesheet: timesheet, running: false)
         Task {
             do {
-                try await service.stopTimer(timesheetId: timesheet.id)
+                try await service.stopTimer(timesheet: timesheet)
             } catch {
                 print("[Timer] Stop failed: \(error)")
             }
@@ -356,9 +372,8 @@ final class AccountManager: ObservableObject {
                 case .ticket:
                     try await service.startTimerOnTicket(ticketId: r.id)
                 case .recentTimesheet:
-                    if let tsId = r.timesheetId {
-                        try await service.startTimer(timesheetId: tsId)
-                    }
+                    // Recent timesheets already have a source, start via the placeholder
+                    try await service.startTimer(timesheet: placeholder)
                 }
             } catch {
                 print("[Search] Start timer failed: \(error)")
