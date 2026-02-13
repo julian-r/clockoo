@@ -1,0 +1,89 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build -c release
+
+      - name: Create app bundle
+        run: |
+          APP="Clockoo.app"
+          rm -rf "$APP"
+          mkdir -p "$APP/Contents/MacOS"
+          mkdir -p "$APP/Contents/Resources"
+          
+          cp .build/release/Clockoo "$APP/Contents/MacOS/Clockoo"
+          cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+          
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="0.0.0"
+          fi
+          
+          cat > "$APP/Contents/Info.plist" << PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key>
+              <string>Clockoo</string>
+              <key>CFBundleDisplayName</key>
+              <string>Clockoo</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.clockoo</string>
+              <key>CFBundleVersion</key>
+              <string>${VERSION}</string>
+              <key>CFBundleShortVersionString</key>
+              <string>${VERSION}</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleExecutable</key>
+              <string>Clockoo</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>14.0</string>
+              <key>LSUIElement</key>
+              <true/>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+          
+          codesign --force --sign - "$APP"
+
+      - name: Create DMG
+        run: |
+          hdiutil create -volname Clockoo -srcfolder Clockoo.app -ov -format UDZO Clockoo.dmg
+
+      - name: Create ZIP
+        run: |
+          ditto -c -k --keepParent Clockoo.app Clockoo.app.zip
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Clockoo
+          path: |
+            Clockoo.dmg
+            Clockoo.app.zip
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Clockoo.dmg
+            Clockoo.app.zip
+          generate_release_notes: true
