@@ -36,19 +36,21 @@ final class MenuBarController {
 
     private func setupPopover() {
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 360, height: 400)
         popover.behavior = .transient
         popover.animates = true
         let settingsAction = { [weak self] in
             self?.popover.performClose(nil)
             self?.settingsController.showSettings()
         }
-        popover.contentViewController = NSHostingController(
+        let hostingController = NSHostingController(
             rootView: TimerPopoverView(
                 accountManager: accountManager,
                 onOpenSettings: settingsAction
             )
         )
+        // Let SwiftUI size the popover content naturally
+        hostingController.sizingOptions = .preferredContentSize
+        popover.contentViewController = hostingController
     }
 
     private func startDisplayUpdates() {

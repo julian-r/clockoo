@@ -5,6 +5,8 @@ struct SettingsView: View {
     @ObservedObject var accountManager: AccountManager
     @State private var accounts: [EditableAccount] = []
     @State private var selectedAccountId: String?
+    /// Separate editing copy — prevents sidebar re-renders from stealing focus
+    @State private var editingAccount: EditableAccount?
     @State private var showDeleteConfirm = false
     @State private var testResult: TestResult?
 
@@ -17,12 +19,25 @@ struct SettingsView: View {
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 700, minHeight: 450)
         .onAppear { loadAccounts() }
+        .onChange(of: selectedAccountId) { _, newId in
+            syncEditingAccount(to: newId)
+        }
         .alert("Delete Account?", isPresented: $showDeleteConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) { deleteSelectedAccount() }
         } message: {
             Text("This will remove the account and its API key from Keychain.")
         }
+    }
+
+    /// Copy selected account into editingAccount (separate state, no sidebar coupling)
+    private func syncEditingAccount(to id: String?) {
+        if let id, let account = accounts.first(where: { $0.id == id }) {
+            editingAccount = account
+        } else {
+            editingAccount = nil
+        }
+        testResult = nil
     }
 
     // MARK: - Sidebar
@@ -81,13 +96,14 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let selectedId = selectedAccountId,
-           let index = accounts.firstIndex(where: { $0.id == selectedId })
-        {
+        if editingAccount != nil {
             AccountEditorView(
-                account: $accounts[index],
+                account: Binding(
+                    get: { editingAccount! },
+                    set: { editingAccount = $0 }
+                ),
                 testResult: $testResult,
-                onTest: { testConnection(account: accounts[index]) },
+                onTest: { if let acc = editingAccount { testConnection(account: acc) } },
                 onSave: saveAll
             )
         } else {
@@ -115,6 +131,7 @@ struct SettingsView: View {
             )
         }
         selectedAccountId = accounts.first?.id
+        syncEditingAccount(to: selectedAccountId)
     }
 
     private func addAccount() {
@@ -141,33 +158,41 @@ struct SettingsView: View {
         KeychainHelper.deleteAPIKey(for: selectedId)
         accounts.remove(at: index)
         selectedAccountId = accounts.first?.id
+        editingAccount = nil
         saveAll()
     }
 
+    /// Write editingAccount back into the accounts array, sanitize, and persist
     private func saveAll() {
-        // Sanitize inputs before saving
-        for i in accounts.indices {
-            accounts[i].url = accounts[i].url
+        // Write the editing copy back into the array
+        if var edited = editingAccount,
+           let index = accounts.firstIndex(where: { $0.id == selectedAccountId })
+        {
+            // Sanitize
+            edited.url = edited.url
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            accounts[i].database = accounts[i].database
+            edited.database = edited.database
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            accounts[i].username = accounts[i].username
+            edited.username = edited.username
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            accounts[i].id = accounts[i].id
+            edited.id = edited.id
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased()
                 .replacingOccurrences(of: " ", with: "-")
-            accounts[i].label = accounts[i].label
+            edited.label = edited.label
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
 
-        // Save API keys to Keychain (trimmed)
-        for account in accounts {
-            let key = account.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Save API key to Keychain if provided
+            let key = edited.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
             if !key.isEmpty {
-                try? KeychainHelper.setAPIKey(key, for: account.id)
+                try? KeychainHelper.setAPIKey(key, for: edited.id)
+                edited.apiKey = ""  // Clear from memory after storing
+                edited.hasKeychainKey = true
             }
+
+            accounts[index] = edited
+            editingAccount = edited
         }
 
         // Save config (without secrets)
@@ -198,7 +223,7 @@ struct SettingsView: View {
         accountManager.loadAccounts()
         accountManager.startPolling()
 
-        // Refresh keychain indicators
+        // Refresh keychain indicators in sidebar
         for i in accounts.indices {
             accounts[i].hasKeychainKey = KeychainHelper.getAPIKey(for: accounts[i].id) != nil
         }
