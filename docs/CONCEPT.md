@@ -49,24 +49,32 @@ Clockoo supports multiple Odoo instances from the start. Each account is a separ
             "label": "Work",
             "url": "https://work.odoo.com",
             "database": "work-db",
-            "username": "user@work.com",
-            "apiKey": "keychain:clockoo/work"
+            "username": "user@work.com"
         },
         {
             "id": "freelance",
             "label": "Freelance",
             "url": "https://freelance.odoo.com",
             "database": "freelance-db",
-            "username": "user@freelance.com",
-            "apiKey": "keychain:clockoo/freelance"
+            "username": "user@freelance.com"
         }
     ]
 }
 ```
 
+**No secrets in the config file.** API keys are stored exclusively in macOS Keychain.
+
+### Keychain Storage
+
+Each account's API key is stored in macOS Keychain under:
+- **Service:** `com.clockoo`
+- **Account:** `{account.id}` (e.g. `work`, `freelance`)
+
+On first launch (or when adding an account), clockoo prompts for the API key and stores it in Keychain. The config file only contains connection info — safe to commit, sync, or back up.
+
 ### Design Decisions
 
-- **Secrets in macOS Keychain** — API keys stored in Keychain, referenced via `keychain:` prefix. Never in plaintext config files.
+- **Secrets only in macOS Keychain** — API keys never touch disk as plaintext. Keychain handles encryption, access control, and biometric unlock.
 - **Own config, no vodoo dependency** — Clockoo has its own config. No coupling to vodoo.
 - **Account label in UI** — Each timer row shows which account it belongs to (subtle badge/color).
 - **Independent polling** — Each account has its own poll cycle. One slow/down instance doesn't block others.
