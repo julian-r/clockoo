@@ -289,29 +289,89 @@ final class AccountManager: ObservableObject {
         return allResults
     }
 
-    /// Start a timer on a search result
+    /// Start a timer on a search result (with optimistic update)
     func startTimerOnSearchResult(_ result: AccountSearchResult) {
         guard let service = timerServices[result.accountId] else { return }
-        Task {
-            do {
-                switch result.result.kind {
-                case .task:
-                    try await service.startTimerOnTask(taskId: result.result.id)
-                case .ticket:
-                    try await service.startTimerOnTicket(ticketId: result.result.id)
-                case .recentTimesheet:
-                    if let tsId = result.result.timesheetId {
-                        try await service.startTimer(timesheetId: tsId)
+
+        // Optimistic: stop any other running timers and insert a placeholder
+        let r = result.result
+        let placeholderId = -(r.id)  // negative ID as placeholder
+
+        let source: TimerSource
+        switch r.kind {
+        case .task: source = .task(id: r.id, name: r.name)
+        case .ticket: source = .ticket(id: r.id, name: r.name)
+        case .recentTimesheet:
+            // For recent timesheets, reuse existing source info
+            source = .task(id: r.id, name: r.name)
+        }
+
+        let placeholder = Timesheet(
+            id: r.kind == .recentTimesheet ? (r.timesheetId ?? placeholderId) : placeholderId,
+            accountId: result.accountId,
+            name: r.name,
+            projectName: r.projectName,
+            source: source,
+            unitAmount: 0,
+            timerStart: Date(),
+            date: Self.todayString
+        )
+
+        // Stop other running timers optimistically
+        for accountId in timesheetsByAccount.keys {
+            if var timesheets = timesheetsByAccount[accountId] {
+                for i in timesheets.indices {
+                    if timesheets[i].state == .running {
+                        timesheets[i] = Timesheet(
+                            id: timesheets[i].id,
+                            accountId: timesheets[i].accountId,
+                            name: timesheets[i].name,
+                            projectName: timesheets[i].projectName,
+                            source: timesheets[i].source,
+                            unitAmount: timesheets[i].unitAmount,
+                            timerStart: nil,
+                            date: timesheets[i].date
+                        )
                     }
                 }
-                // Poll to pick up new timesheet
-                await MainActor.run {
-                    self.pollNow(accountId: result.accountId)
+                timesheetsByAccount[accountId] = timesheets
+            }
+        }
+
+        // Insert placeholder (or update existing for recent timesheets)
+        var timesheets = timesheetsByAccount[result.accountId] ?? []
+        if let existingIdx = timesheets.firstIndex(where: { $0.id == placeholder.id }) {
+            timesheets[existingIdx] = placeholder
+        } else {
+            timesheets.insert(placeholder, at: 0)
+        }
+        timesheetsByAccount[result.accountId] = timesheets
+
+        // Fire API call, then poll to get real data
+        Task {
+            do {
+                switch r.kind {
+                case .task:
+                    try await service.startTimerOnTask(taskId: r.id)
+                case .ticket:
+                    try await service.startTimerOnTicket(ticketId: r.id)
+                case .recentTimesheet:
+                    if let tsId = r.timesheetId {
+                        try await service.startTimer(timesheetId: tsId)
+                    }
                 }
             } catch {
                 print("[Search] Start timer failed: \(error)")
             }
+            pollNow(accountId: result.accountId)
         }
+    }
+
+    private static var todayString: String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = .current
+        return f.string(from: Date())
     }
 
     /// Get the base URL for an account (for opening web URLs)
