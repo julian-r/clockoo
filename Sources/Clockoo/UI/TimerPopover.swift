@@ -212,6 +212,17 @@ struct TimerRow: View {
             .help(toggleHelp)
             .frame(width: 24, height: 24)
 
+            if timesheet.hasWebLink {
+                Button(action: onOpen) {
+                    Image(systemName: "arrow.up.right.square")
+                        .frame(width: 16, height: 16)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Open in Odoo")
+                .frame(width: 24, height: 24)
+            }
+
             Button(action: onDelete) {
                 Image(systemName: "trash")
                     .frame(width: 16, height: 16)

@@ -79,6 +79,14 @@ struct Timesheet: Identifiable {
         return "\(source.icon) \(srcLabel)"
     }
 
+    /// Whether this timesheet has a task or ticket to open
+    var hasWebLink: Bool {
+        switch source {
+        case .task, .ticket: return true
+        case .standalone: return false
+        }
+    }
+
     /// URL to open the source record in Odoo web
     func webURL(baseURL: String) -> URL? {
         let base = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
