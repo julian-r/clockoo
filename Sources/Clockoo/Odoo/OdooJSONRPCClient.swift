@@ -352,7 +352,22 @@ final class OdooJSONRPCClient: Sendable {
             throw OdooError.noResult
         }
 
-        let resultData = try JSONSerialization.data(withJSONObject: result)
+        // Handle primitive types (int, string, bool) that JSONSerialization
+        // can't serialize as top-level objects — wrap them for JSONDecoder
+        let resultData: Data
+        if JSONSerialization.isValidJSONObject(result) {
+            resultData = try JSONSerialization.data(withJSONObject: result)
+        } else if let num = result as? NSNumber, T.self == Int.self {
+            // Bare integer (e.g. uid from authenticate)
+            resultData = Data("\(num.intValue)".utf8)
+        } else if let str = result as? String {
+            resultData = Data("\"\(str)\"".utf8)
+        } else if let bool = result as? Bool {
+            resultData = Data(bool ? "true".utf8 : "false".utf8)
+        } else {
+            // Wrap in array so JSONSerialization can handle it
+            resultData = try JSONSerialization.data(withJSONObject: [result])
+        }
         return try JSONDecoder().decode(T.self, from: resultData)
     }
 
