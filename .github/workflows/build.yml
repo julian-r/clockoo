@@ -88,46 +88,43 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           SHA256=$(shasum -a 256 Clockoo.app.zip | awk '{print $1}')
           
-          CASK=$(cat <<EOF
-          cask "clockoo" do
-            version "${VERSION}"
-            sha256 "${SHA256}"
-
-            url "https://github.com/julian-r/clockoo/releases/download/v#{version}/Clockoo.app.zip"
+          python3 - "$VERSION" "$SHA256" "$TAP_TOKEN" <<'PYEOF'
+          import sys, json, base64, urllib.request
+          
+          version, sha256, token = sys.argv[1], sys.argv[2], sys.argv[3]
+          
+          cask = f'''cask "clockoo" do
+            version "{version}"
+            sha256 "{sha256}"
+          
+            url "https://github.com/julian-r/clockoo/releases/download/v#{{version}}/Clockoo.app.zip"
             name "Clockoo"
             desc "Lightweight macOS menu bar app for Odoo time tracking"
             homepage "https://github.com/julian-r/clockoo"
-
+          
             depends_on macos: ">= :sonoma"
-
+          
             app "Clockoo.app"
-
+          
             zap trash: [
               "~/.config/clockoo",
             ]
           end
-          EOF
-          )
+          '''
           
-          # Update via GitHub API
-          # Get current file SHA
-          FILE_SHA=$(curl -s -H "Authorization: token ${TAP_TOKEN}" \
-            "https://api.github.com/repos/julian-r/homebrew-clockoo/contents/Casks/clockoo.rb" \
-            | python3 -c "import sys,json; print(json.load(sys.stdin).get('sha',''))")
+          headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+          api = "https://api.github.com/repos/julian-r/homebrew-clockoo/contents/Casks/clockoo.rb"
           
-          # Push updated cask
-          curl -s -X PUT \
-            -H "Authorization: token ${TAP_TOKEN}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/julian-r/homebrew-clockoo/contents/Casks/clockoo.rb" \
-            -d "$(python3 -c "
-          import json, base64
-          content = base64.b64encode('''${CASK}'''.encode()).decode()
-          print(json.dumps({
-              'message': 'Update Clockoo to ${VERSION}',
-              'content': content,
-              'sha': '${FILE_SHA}'
-          }))
-          ")"
+          req = urllib.request.Request(api, headers=headers)
+          file_sha = json.loads(urllib.request.urlopen(req).read()).get("sha", "")
           
-          echo "✅ Updated Homebrew tap to ${VERSION} (sha256: ${SHA256})"
+          body = json.dumps({
+              "message": f"Update Clockoo to {version}",
+              "content": base64.b64encode(cask.encode()).decode(),
+              "sha": file_sha
+          }).encode()
+          
+          req = urllib.request.Request(api, data=body, headers=headers, method="PUT")
+          resp = urllib.request.urlopen(req)
+          print(f"Updated Homebrew tap to {version} (sha256: {sha256})")
+          PYEOF
