@@ -10,6 +10,7 @@ final class MenuBarController {
     private var blinkTimer: Timer?
     private var blinkPhase = false
     private var isBlinking = false
+    private var popoverOpen = false
     private let accountManager: AccountManager
     private let settingsController: SettingsWindowController
 
@@ -68,6 +69,8 @@ final class MenuBarController {
 
     func updateMenuBarDisplay() {
         guard let button = statusItem.button else { return }
+        // Don't resize while popover is open — it shifts the popover
+        guard !popoverOpen else { return }
 
         if let running = accountManager.runningTimesheet {
             // Timer is running — show filled clock + elapsed time
@@ -115,11 +118,14 @@ final class MenuBarController {
 
         if popover.isShown {
             popover.performClose(nil)
-            // Restore variable length when popover closes
+            popoverOpen = false
+            // Restore variable length and update display
             statusItem.length = NSStatusItem.variableLength
+            updateMenuBarDisplay()
         } else {
             accountManager.pollAll()
             // Freeze status item width while popover is open so it doesn't shift
+            popoverOpen = true
             statusItem.length = button.frame.width
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
