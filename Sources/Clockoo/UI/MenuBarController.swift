@@ -8,9 +8,11 @@ final class MenuBarController {
     private var popover: NSPopover!
     private var updateTimer: Timer?
     private let accountManager: AccountManager
+    private let settingsController: SettingsWindowController
 
-    init(accountManager: AccountManager) {
+    init(accountManager: AccountManager, settingsController: SettingsWindowController) {
         self.accountManager = accountManager
+        self.settingsController = settingsController
         setupStatusItem()
         setupPopover()
         startDisplayUpdates()
@@ -37,8 +39,15 @@ final class MenuBarController {
         popover.contentSize = NSSize(width: 360, height: 400)
         popover.behavior = .transient
         popover.animates = true
+        let settingsAction = { [weak self] in
+            self?.popover.performClose(nil)
+            self?.settingsController.showSettings()
+        }
         popover.contentViewController = NSHostingController(
-            rootView: TimerPopoverView(accountManager: accountManager)
+            rootView: TimerPopoverView(
+                accountManager: accountManager,
+                onOpenSettings: settingsAction
+            )
         )
     }
 

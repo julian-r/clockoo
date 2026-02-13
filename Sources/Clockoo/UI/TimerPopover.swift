@@ -3,6 +3,7 @@ import SwiftUI
 /// The main popover view showing all timers grouped by account
 struct TimerPopoverView: View {
     @ObservedObject var accountManager: AccountManager
+    var onOpenSettings: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -122,6 +123,17 @@ struct TimerPopoverView: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
                 Text("Refresh")
+            }
+            .buttonStyle(.plain)
+            .font(.caption)
+
+            Spacer()
+
+            Button {
+                onOpenSettings?()
+            } label: {
+                Image(systemName: "gearshape")
+                Text("Settings")
             }
             .buttonStyle(.plain)
             .font(.caption)

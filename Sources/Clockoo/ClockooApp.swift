@@ -21,28 +21,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
     private var accountManager: AccountManager?
     private var localAPIServer: LocalAPIServer?
+    private var settingsController: SettingsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Ensure config directory exists
         ConfigLoader.ensureConfigDir()
-
-        // Create sample config if first run
-        if !FileManager.default.fileExists(atPath: ConfigLoader.configFile.path) {
-            try? ConfigLoader.writeSampleConfig()
-            print(
-                "[Clockoo] Created sample config at \(ConfigLoader.configFile.path)")
-            print(
-                "[Clockoo] Edit it with your Odoo credentials, then add API keys via Keychain."
-            )
-        }
 
         // Initialize account manager
         let manager = AccountManager()
         manager.loadAccounts()
         self.accountManager = manager
 
-        // Set up menu bar
-        menuBarController = MenuBarController(accountManager: manager)
+        // Settings window controller
+        let settings = SettingsWindowController(accountManager: manager)
+        self.settingsController = settings
+
+        // Set up menu bar (pass settings controller for the ⚙ button)
+        menuBarController = MenuBarController(accountManager: manager, settingsController: settings)
+
+        // If no accounts or no API keys, open settings on first run
+        let hasConfiguredAccount = manager.accounts.contains { account in
+            KeychainHelper.getAPIKey(for: account.id) != nil
+        }
+        if manager.accounts.isEmpty || !hasConfiguredAccount {
+            settings.showSettings()
+        }
 
         // Start polling Odoo
         manager.startPolling()
