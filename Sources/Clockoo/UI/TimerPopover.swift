@@ -197,26 +197,29 @@ struct TimerRow: View {
 
             Spacer()
 
-            // Elapsed time
+            // Elapsed time — fixed width to prevent layout shifts
             Text(timesheet.elapsedFormatted)
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(timesheet.state == .running ? .primary : .secondary)
+                .frame(minWidth: 44, alignment: .trailing)
 
-            // Action buttons
+            // Action buttons — fixed frames to prevent layout shifts
             Button(action: onToggle) {
                 Image(systemName: toggleIcon)
-                    .font(.caption)
+                    .frame(width: 16, height: 16)
             }
             .buttonStyle(.plain)
             .help(toggleHelp)
+            .frame(width: 24, height: 24)
 
             Button(action: onDelete) {
                 Image(systemName: "trash")
-                    .font(.caption)
+                    .frame(width: 16, height: 16)
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .help("Delete entry")
+            .frame(width: 24, height: 24)
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 4)
