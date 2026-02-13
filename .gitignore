@@ -7,3 +7,5 @@ dist/
 *.xcodeproj
 *.xcworkspace
 xcuserdata/
+Clockoo.app/
+AppIcon.iconset/
