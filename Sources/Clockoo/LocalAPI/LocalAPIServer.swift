@@ -8,7 +8,7 @@ import Network
 @MainActor
 final class LocalAPIServer {
     private var listener: Any?  // NWListener, but kept as Any for build compat
-    private let accountManager: AccountManager
+    private nonisolated(unsafe) var accountManager: AccountManager
     let port: UInt16
 
     init(accountManager: AccountManager, port: UInt16 = 19847) {
@@ -35,8 +35,9 @@ final class LocalAPIServer {
             }
 
             nwListener.newConnectionHandler = { [weak self] connection in
+                guard let self else { return }
                 Task { @MainActor in
-                    self?.handleConnection(connection)
+                    self.handleConnection(connection)
                 }
             }
 
