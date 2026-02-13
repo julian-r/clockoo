@@ -115,8 +115,12 @@ final class MenuBarController {
 
         if popover.isShown {
             popover.performClose(nil)
+            // Restore variable length when popover closes
+            statusItem.length = NSStatusItem.variableLength
         } else {
             accountManager.pollAll()
+            // Freeze status item width while popover is open so it doesn't shift
+            statusItem.length = button.frame.width
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
