@@ -226,6 +226,12 @@ final class OdooJSONRPCClient: Sendable {
             throw OdooError.httpError(statusCode: httpResponse.statusCode)
         }
 
+        // Handle bare null/false/true responses (e.g. action_timer_start returns null)
+        if data.isEmpty { return NSNull() }
+        let raw = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if raw == "null" || raw == "false" { return NSNull() }
+        if raw == "true" { return true as Any }
+
         return try JSONSerialization.jsonObject(with: data)
     }
 
