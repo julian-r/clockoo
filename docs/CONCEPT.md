@@ -12,7 +12,7 @@ A lightweight macOS menu bar app that shows active Odoo timesheets/timers and le
 | **JSON-RPC over URLSession** | Odoo's `/jsonrpc` endpoint. Swift has first-class JSON support (`Codable`, `JSONEncoder`/`JSONDecoder`). ~50-80 lines for the client, no dependencies needed. |
 | **SwiftUI popover** | For the timer list UI inside the menu bar popover. Lightweight, native, no web views. |
 | **Local HTTP API** | Tiny local server for Stream Deck plugin and other integrations. |
-| **Stream Deck plugin (Node.js/TS)** | Thin client using Elgato's official SDK, talks to clockoo's local API. |
+| **Stream Deck plugin (Swift)** | Native console app using Stream Deck's WebSocket protocol. No Node.js runtime. Talks to clockoo's local API. |
 
 ### Why JSON-RPC instead of XML-RPC?
 
@@ -67,7 +67,7 @@ Clockoo supports multiple Odoo instances from the start. Each account is a separ
 ### Design Decisions
 
 - **Secrets in macOS Keychain** — API keys stored in Keychain, referenced via `keychain:` prefix. Never in plaintext config files.
-- **Backward-compatible with vodoo** — If no `accounts.json` exists, clockoo falls back to reading `~/.config/vodoo/config.env` as a single account.
+- **Own config, no vodoo dependency** — Clockoo has its own config. No coupling to vodoo.
 - **Account label in UI** — Each timer row shows which account it belongs to (subtle badge/color).
 - **Independent polling** — Each account has its own poll cycle. One slow/down instance doesn't block others.
 - **Per-account timer state** — Each Odoo instance can have its own running timer (they're independent systems).
@@ -197,14 +197,24 @@ See [Multi-Account Popover](#popover-with-multi-account) above.
 ### Architecture
 
 ```
-┌─────────────┐    HTTP/localhost    ┌──────────────┐    JSON-RPC    ┌──────┐
-│  Stream Deck │ ◄─────────────────► │   Clockoo    │ ◄────────────► │ Odoo │
-│   Plugin     │    :19847           │  (menu bar)  │               │      │
-│  (Node.js)   │                     └──────────────┘               └──────┘
-└─────────────┘
+┌─────────────┐   WebSocket   ┌───────────────────┐   HTTP/localhost   ┌──────────────┐   JSON-RPC   ┌──────┐
+│  Stream Deck │ ◄───────────► │ clockoo-sd plugin │ ◄────────────────► │   Clockoo    │ ◄──────────► │ Odoo │
+│     App      │               │  (Swift binary)   │     :19847         │  (menu bar)  │             │      │
+└─────────────┘                └───────────────────┘                    └──────────────┘             └──────┘
 ```
 
+**100% Swift, zero external runtimes.** The Stream Deck plugin is a native console app — Stream Deck supports this as an alternative to Node.js. Communication uses `URLSessionWebSocketTask` (built into Foundation).
+
 Clockoo runs a **tiny local HTTP server** (port 19847 or configurable) that the Stream Deck plugin calls. This keeps all Odoo logic and credentials in clockoo — the Stream Deck plugin is a thin UI layer.
+
+### How the Stream Deck Native Plugin Works
+
+1. Stream Deck launches the plugin binary with CLI args: `-port`, `-pluginUUID`, `-registerEvent`, `-info`
+2. Plugin connects to Stream Deck's WebSocket on the given port
+3. Plugin registers itself, then receives/sends JSON events (key press, set title/image, etc.)
+4. Plugin polls clockoo's local HTTP API to get timer state and update key displays
+
+All using Foundation's built-in WebSocket and HTTP — no dependencies.
 
 ### Local API Endpoints
 
@@ -221,7 +231,7 @@ Timer IDs in the API are prefixed with account ID: `work:42`, `freelance:17`.
 
 ### Stream Deck Plugin
 
-Built with the official Elgato Stream Deck SDK (Node.js/TypeScript).
+Native Swift console app, distributed inside the `.sdPlugin` bundle.
 
 **Actions:**
 
@@ -233,7 +243,7 @@ Built with the official Elgato Stream Deck SDK (Node.js/TypeScript).
 
 **Key display updates** via polling clockoo's local API every 5s.
 
-**Property Inspector** (Stream Deck settings UI):
+**Property Inspector** (Stream Deck settings UI — this part is HTML, required by Stream Deck's architecture):
 - Select account
 - Browse/search tasks and tickets to bind to a key
 - Configure display format
@@ -241,36 +251,32 @@ Built with the official Elgato Stream Deck SDK (Node.js/TypeScript).
 ### Plugin Structure
 
 ```
-clockoo-streamdeck/
+streamdeck/
 ├── com.clockoo.sdPlugin/
-│   ├── manifest.json
+│   ├── manifest.json              # Plugin metadata, points to native binary
+│   ├── bin/
+│   │   └── clockoo-sd             # Compiled Swift binary
 │   ├── imgs/
 │   └── ui/
-│       └── property-inspector.html
-├── src/
-│   ├── plugin.ts
-│   └── actions/
-│       ├── toggle-timer.ts
-│       ├── quick-switch.ts
-│       └── timer-status.ts
-├── package.json
-├── rollup.config.mjs
-└── tsconfig.json
+│       └── property-inspector.html  # HTML (required by Stream Deck for settings UI)
+├── Sources/
+│   ├── main.swift                 # Entry point, parse CLI args, connect WebSocket
+│   ├── StreamDeckConnection.swift # WebSocket client for Stream Deck protocol
+│   ├── ClockooAPIClient.swift     # HTTP client for clockoo's local API
+│   └── Actions/
+│       ├── ToggleTimerAction.swift
+│       ├── QuickSwitchAction.swift
+│       └── TimerStatusAction.swift
+└── Package.swift                  # Swift Package Manager
 ```
-
-This lives in a `streamdeck/` subdirectory of the clockoo repo (or a separate repo if it grows).
 
 ## Configuration
 
-### Primary: `~/.config/clockoo/accounts.json`
+### Accounts: `~/.config/clockoo/accounts.json`
 
 See [Multi-Account Support](#multi-account-support) above.
 
-### Fallback: `~/.config/vodoo/config.env`
-
-If no clockoo config exists, reads vodoo's config as a single account for easy onboarding.
-
-### Settings stored in clockoo
+### App Settings
 
 - Poll interval (default 60s)
 - Local API port (default 19847)
@@ -304,11 +310,10 @@ clockoo/
 │   └── Models/
 │       └── Timesheet.swift         # Timesheet data model
 ├── Clockoo.xcodeproj/
-├── streamdeck/                     # Stream Deck plugin (Node.js/TS)
+├── streamdeck/                     # Stream Deck plugin (native Swift)
 │   ├── com.clockoo.sdPlugin/
-│   ├── src/
-│   ├── package.json
-│   └── tsconfig.json
+│   ├── Sources/
+│   └── Package.swift
 ├── docs/
 │   └── CONCEPT.md
 ├── README.md
@@ -318,7 +323,7 @@ clockoo/
 
 ## MVP Scope
 
-1. ✅ Multi-account config (`accounts.json` + vodoo fallback)
+1. ✅ Multi-account config (`accounts.json`)
 2. ✅ Keychain storage for API keys
 3. ✅ Connect to Odoo via JSON-RPC, authenticate
 4. ✅ Fetch today's timesheets for current user (tasks + tickets + standalone)
@@ -331,7 +336,7 @@ clockoo/
 
 ## Post-MVP
 
-- Stream Deck plugin (toggle, quick-switch, status actions)
+- Stream Deck plugin — native Swift binary (toggle, quick-switch, status actions)
 - Keyboard shortcut to toggle current timer
 - Notification when timer has been running > X hours
 - Quick-start from recent tasks (search in popover)
