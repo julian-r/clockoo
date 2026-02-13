@@ -9,82 +9,93 @@ struct SettingsView: View {
     @State private var testResult: TestResult?
 
     var body: some View {
-        HSplitView {
-            // Account list (left)
-            VStack(alignment: .leading, spacing: 0) {
-                List(selection: $selectedAccountId) {
-                    ForEach(accounts) { account in
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(account.label.isEmpty ? "New Account" : account.label)
-                                    .fontWeight(.medium)
-                                Text(account.url.isEmpty ? "Not configured" : account.url)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer()
-                            if account.hasKeychainKey {
-                                Image(systemName: "key.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.green)
-                                    .help("API key stored in Keychain")
-                            }
-                        }
-                        .tag(account.id)
-                    }
-                }
-                .listStyle(.sidebar)
-
-                Divider()
-
-                HStack(spacing: 12) {
-                    Button(action: addAccount) {
-                        Image(systemName: "plus")
-                    }
-                    .buttonStyle(.plain)
-                    .help("Add account")
-
-                    Button(action: { showDeleteConfirm = true }) {
-                        Image(systemName: "minus")
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(selectedAccountId == nil)
-                    .help("Remove account")
-                }
-                .padding(8)
-            }
-            .frame(minWidth: 200, maxWidth: 250)
-
-            // Account editor (right)
-            if let selectedId = selectedAccountId,
-               let index = accounts.firstIndex(where: { $0.id == selectedId })
-            {
-                AccountEditorView(
-                    account: $accounts[index],
-                    testResult: $testResult,
-                    onTest: { testConnection(account: accounts[index]) },
-                    onSave: saveAll
-                )
-                .frame(minWidth: 350)
-            } else {
-                VStack {
-                    Image(systemName: "sidebar.left")
-                        .font(.largeTitle)
-                        .foregroundStyle(.secondary)
-                    Text("Select an account")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+        NavigationSplitView {
+            sidebar
+        } detail: {
+            detail
         }
-        .frame(minWidth: 600, minHeight: 400)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 700, minHeight: 450)
         .onAppear { loadAccounts() }
         .alert("Delete Account?", isPresented: $showDeleteConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) { deleteSelectedAccount() }
         } message: {
             Text("This will remove the account and its API key from Keychain.")
+        }
+    }
+
+    // MARK: - Sidebar
+
+    private var sidebar: some View {
+        List(selection: $selectedAccountId) {
+            ForEach(accounts) { account in
+                accountRow(account)
+                    .tag(account.id)
+            }
+        }
+        .listStyle(.sidebar)
+        .safeAreaInset(edge: .bottom) {
+            HStack(spacing: 12) {
+                Button(action: addAccount) {
+                    Image(systemName: "plus")
+                }
+                .help("Add account")
+
+                Button(action: { showDeleteConfirm = true }) {
+                    Image(systemName: "minus")
+                }
+                .disabled(selectedAccountId == nil)
+                .help("Remove account")
+
+                Spacer()
+            }
+            .buttonStyle(.borderless)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.bar)
+        }
+        .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 280)
+    }
+
+    private func accountRow(_ account: EditableAccount) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: account.hasKeychainKey ? "checkmark.circle.fill" : "circle.dashed")
+                .foregroundStyle(account.hasKeychainKey ? .green : .secondary)
+                .imageScale(.medium)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(account.label.isEmpty ? "New Account" : account.label)
+                    .font(.body)
+                    .fontWeight(.medium)
+                Text(account.url.isEmpty ? "Not configured" : prettifyURL(account.url))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    // MARK: - Detail
+
+    @ViewBuilder
+    private var detail: some View {
+        if let selectedId = selectedAccountId,
+           let index = accounts.firstIndex(where: { $0.id == selectedId })
+        {
+            AccountEditorView(
+                account: $accounts[index],
+                testResult: $testResult,
+                onTest: { testConnection(account: accounts[index]) },
+                onSave: saveAll
+            )
+        } else {
+            ContentUnavailableView(
+                "No Account Selected",
+                systemImage: "person.crop.circle",
+                description: Text("Select an account from the sidebar, or add a new one.")
+            )
         }
     }
 
@@ -99,7 +110,8 @@ struct SettingsView: View {
                 database: config.database,
                 username: config.username,
                 apiKey: "",
-                hasKeychainKey: KeychainHelper.getAPIKey(for: config.id) != nil
+                hasKeychainKey: KeychainHelper.getAPIKey(for: config.id) != nil,
+                apiVersion: config.apiVersion
             )
         }
         selectedAccountId = accounts.first?.id
@@ -114,7 +126,8 @@ struct SettingsView: View {
             database: "",
             username: "",
             apiKey: "",
-            hasKeychainKey: false
+            hasKeychainKey: false,
+            apiVersion: .json2
         )
         accounts.append(account)
         selectedAccountId = newId
@@ -132,10 +145,28 @@ struct SettingsView: View {
     }
 
     private func saveAll() {
-        // Save API keys to Keychain
+        // Sanitize inputs before saving
+        for i in accounts.indices {
+            accounts[i].url = accounts[i].url
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            accounts[i].database = accounts[i].database
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            accounts[i].username = accounts[i].username
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            accounts[i].id = accounts[i].id
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .replacingOccurrences(of: " ", with: "-")
+            accounts[i].label = accounts[i].label
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        // Save API keys to Keychain (trimmed)
         for account in accounts {
-            if !account.apiKey.isEmpty {
-                try? KeychainHelper.setAPIKey(account.apiKey, for: account.id)
+            let key = account.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !key.isEmpty {
+                try? KeychainHelper.setAPIKey(key, for: account.id)
             }
         }
 
@@ -146,7 +177,8 @@ struct SettingsView: View {
                 label: acc.label,
                 url: acc.url,
                 database: acc.database,
-                username: acc.username
+                username: acc.username,
+                apiVersion: acc.apiVersion
             )
         }
 
@@ -180,7 +212,7 @@ struct SettingsView: View {
             : account.apiKey
 
         guard !apiKey.isEmpty else {
-            testResult = .failure("No API key — enter one above")
+            testResult = .failure("No API key — enter one above or save first")
             return
         }
 
@@ -188,7 +220,8 @@ struct SettingsView: View {
             url: account.url,
             database: account.database,
             username: account.username,
-            apiKey: apiKey
+            apiKey: apiKey,
+            apiVersion: account.apiVersion
         )
 
         Task {
@@ -204,6 +237,12 @@ struct SettingsView: View {
             }
         }
     }
+
+    private func prettifyURL(_ url: String) -> String {
+        url.replacingOccurrences(of: "https://", with: "")
+           .replacingOccurrences(of: "http://", with: "")
+           .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
 }
 
 // MARK: - Account Editor
@@ -215,73 +254,145 @@ struct AccountEditorView: View {
     let onSave: () -> Void
 
     var body: some View {
-        Form {
-            Section("Account") {
-                TextField("ID", text: $account.id)
-                    .help("Unique identifier (e.g. 'work', 'freelance')")
-                TextField("Label", text: $account.label)
-                    .help("Display name shown in the menu bar")
-            }
-
-            Section("Odoo Connection") {
-                TextField("URL", text: $account.url)
-                    .help("e.g. https://mycompany.odoo.com")
-                TextField("Database", text: $account.database)
-                TextField("Username", text: $account.username)
-                    .help("Your Odoo login email")
-            }
-
-            Section("API Key") {
-                SecureField(
-                    account.hasKeychainKey ? "API Key (stored in Keychain ✓)" : "API Key",
-                    text: $account.apiKey
-                )
-                .help("Stored securely in macOS Keychain")
-
-                if account.hasKeychainKey && account.apiKey.isEmpty {
-                    Text("Key already in Keychain. Leave empty to keep it, or enter a new one to replace.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Section {
-                HStack {
-                    Button("Test Connection", action: onTest)
-
-                    if let result = testResult {
-                        switch result {
-                        case .testing:
-                            ProgressView()
-                                .scaleEffect(0.6)
-                            Text("Testing...")
-                                .foregroundStyle(.secondary)
-                        case .success(let msg):
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                            Text(msg)
-                                .foregroundStyle(.green)
-                        case .failure(let msg):
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.red)
-                            Text(msg)
-                                .foregroundStyle(.red)
-                                .lineLimit(3)
-                        }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // Account section
+                sectionCard("Account") {
+                    LabeledField("ID") {
+                        TextField("e.g. work, freelance", text: $account.id)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    LabeledField("Label") {
+                        TextField("Display name", text: $account.label)
+                            .textFieldStyle(.roundedBorder)
                     }
                 }
-            }
 
-            Section {
-                HStack {
+                // Connection section
+                sectionCard("Odoo Connection") {
+                    LabeledField("URL") {
+                        TextField("https://mycompany.odoo.com", text: $account.url)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    LabeledField("Database") {
+                        TextField("mycompany", text: $account.database)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    LabeledField("Username") {
+                        TextField("user@example.com", text: $account.username)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    LabeledField("API Version") {
+                        Picker("", selection: $account.apiVersion) {
+                            Text("JSON-2 (Odoo 19+, recommended)").tag(OdooAPIVersion.json2)
+                            Text("Legacy JSON-RPC (Odoo 14–18)").tag(OdooAPIVersion.legacy)
+                        }
+                        .pickerStyle(.radioGroup)
+                    }
+                }
+
+                // API Key section
+                sectionCard("Authentication") {
+                    LabeledField("API Key") {
+                        SecureField(
+                            account.hasKeychainKey
+                                ? "Stored in Keychain ✓ (leave empty to keep)"
+                                : "Enter your Odoo API key",
+                            text: $account.apiKey
+                        )
+                        .textFieldStyle(.roundedBorder)
+                    }
+
+                    if account.hasKeychainKey && account.apiKey.isEmpty {
+                        Label(
+                            "API key is securely stored in macOS Keychain",
+                            systemImage: "lock.shield.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+
+                // Test + Save
+                HStack(spacing: 16) {
+                    Button(action: onTest) {
+                        Label("Test Connection", systemImage: "antenna.radiowaves.left.and.right")
+                    }
+                    .controlSize(.large)
+
+                    testResultView
+
                     Spacer()
-                    Button("Save", action: onSave)
-                        .keyboardShortcut(.return, modifiers: .command)
+
+                    Button(action: onSave) {
+                        Label("Save", systemImage: "checkmark.circle.fill")
+                    }
+                    .controlSize(.large)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .buttonStyle(.borderedProminent)
                 }
             }
+            .padding(24)
         }
-        .formStyle(.grouped)
-        .padding()
+    }
+
+    @ViewBuilder
+    private var testResultView: some View {
+        if let result = testResult {
+            switch result {
+            case .testing:
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Testing...")
+                        .foregroundStyle(.secondary)
+                }
+            case .success(let msg):
+                Label(msg, systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            case .failure(let msg):
+                Label(msg, systemImage: "xmark.circle.fill")
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    private func sectionCard<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 10) {
+                content()
+            }
+            .padding(16)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+}
+
+// MARK: - Labeled Field
+
+struct LabeledField<Content: View>: View {
+    let label: String
+    let content: Content
+
+    init(_ label: String, @ViewBuilder content: () -> Content) {
+        self.label = label
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            content
+        }
     }
 }
 
@@ -295,6 +406,7 @@ struct EditableAccount: Identifiable {
     var username: String
     var apiKey: String
     var hasKeychainKey: Bool
+    var apiVersion: OdooAPIVersion
 }
 
 enum TestResult {

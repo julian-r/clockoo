@@ -1,47 +1,250 @@
 import Foundation
 
-/// Lightweight JSON-RPC client for Odoo's /jsonrpc endpoint
+/// API version to use for communicating with Odoo
+enum OdooAPIVersion: String, Codable {
+    /// Legacy JSON-RPC at /jsonrpc (Odoo 14-19, deprecated in Odoo 20)
+    case legacy = "legacy"
+    /// New JSON-2 API at /json/2/ (Odoo 19+, recommended)
+    case json2 = "json2"
+}
+
+/// Lightweight JSON-RPC client for Odoo
+/// Supports both legacy /jsonrpc and new /json/2/ endpoints
 /// No dependencies — uses URLSession + Codable
 final class OdooJSONRPCClient: Sendable {
     let url: String
     let database: String
     let username: String
     let apiKey: String
+    let apiVersion: OdooAPIVersion
 
     private let session: URLSession
-    private let endpoint: URL
+    private let baseURL: URL
 
-    /// Cached user ID after authentication
+    /// Cached user ID after authentication (legacy API only)
     private let _uid = ManagedAtomic<Int?>(nil)
 
-    init(url: String, database: String, username: String, apiKey: String) {
-        self.url = url.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        self.database = database
-        self.username = username
-        self.apiKey = apiKey
-        self.endpoint = URL(string: "\(self.url)/jsonrpc")!
+    init(
+        url: String,
+        database: String,
+        username: String,
+        apiKey: String,
+        apiVersion: OdooAPIVersion = .json2
+    ) {
+        // Sanitize URL: trim whitespace, trailing slashes, ensure https://
+        var sanitized = url.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if !sanitized.hasPrefix("http://") && !sanitized.hasPrefix("https://") {
+            sanitized = "https://\(sanitized)"
+        }
+
+        self.url = sanitized
+        self.database = database.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.username = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.apiVersion = apiVersion
+
+        self.baseURL = URL(string: self.url) ?? URL(string: "https://invalid.local")!
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         self.session = URLSession(configuration: config)
     }
 
-    // MARK: - JSON-RPC Transport
+    // MARK: - Public API
 
-    /// Send a JSON-RPC call and decode the result
-    func call<T: Decodable>(service: String, method: String, args: [Any]) async throws -> T {
-        let requestId = Int.random(in: 1...999999)
+    /// Authenticate and return the user ID
+    func authenticate() async throws -> Int {
+        switch apiVersion {
+        case .json2:
+            return try await authenticateJSON2()
+        case .legacy:
+            return try await authenticateLegacy()
+        }
+    }
+
+    /// Search and read records
+    func searchRead(
+        model: String,
+        domain: [[Any]],
+        fields: [String],
+        limit: Int? = nil
+    ) async throws -> [[String: Any]] {
+        switch apiVersion {
+        case .json2:
+            return try await searchReadJSON2(model: model, domain: domain, fields: fields, limit: limit)
+        case .legacy:
+            return try await searchReadLegacy(model: model, domain: domain, fields: fields, limit: limit)
+        }
+    }
+
+    /// Call a method on specific record IDs
+    func callMethod(
+        model: String,
+        method: String,
+        ids: [Int]
+    ) async throws {
+        switch apiVersion {
+        case .json2:
+            try await callMethodJSON2(model: model, method: method, ids: ids)
+        case .legacy:
+            try await callMethodLegacy(model: model, method: method, ids: ids)
+        }
+    }
+
+    // MARK: - JSON-2 API (Odoo 19+)
+    // POST /json/2/<model>/<method>
+    // Authorization: bearer <api-key>
+
+    private func authenticateJSON2() async throws -> Int {
+        // JSON-2 uses bearer auth, no separate authenticate call needed.
+        // We call res.users/search_read to get the current user's ID.
+        let records = try await searchReadJSON2(
+            model: "res.users",
+            domain: [["login", "=", username]],
+            fields: ["id"],
+            limit: 1
+        )
+        guard let first = records.first, let uid = first["id"] as? Int else {
+            throw OdooError.authenticationFailed
+        }
+        _uid.value = uid
+        return uid
+    }
+
+    private func searchReadJSON2(
+        model: String,
+        domain: [[Any]],
+        fields: [String],
+        limit: Int? = nil
+    ) async throws -> [[String: Any]] {
+        var body: [String: Any] = [
+            "domain": domain,
+            "fields": fields,
+        ]
+        if let limit { body["limit"] = limit }
+
+        let result = try await requestJSON2(model: model, method: "search_read", body: body)
+
+        guard let records = result as? [[String: Any]] else {
+            throw OdooError.unexpectedResultType
+        }
+        return records
+    }
+
+    private func callMethodJSON2(model: String, method: String, ids: [Int]) async throws {
+        let body: [String: Any] = [
+            "ids": ids,
+        ]
+        _ = try await requestJSON2(model: model, method: method, body: body)
+    }
+
+    private func requestJSON2(model: String, method: String, body: [String: Any]) async throws -> Any {
+        let endpoint = baseURL.appendingPathComponent("json/2/\(model)/\(method)")
+
+        guard JSONSerialization.isValidJSONObject(body) else {
+            throw OdooError.invalidRequest(detail: "Cannot serialize request body to JSON")
+        }
+
+        let jsonData = try JSONSerialization.data(withJSONObject: body)
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.setValue("bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        if !database.isEmpty {
+            request.setValue(database, forHTTPHeaderField: "X-Odoo-Database")
+        }
+        request.setValue("Clockoo", forHTTPHeaderField: "User-Agent")
+        request.httpBody = jsonData
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw OdooError.invalidResponse
+        }
+
+        // JSON-2 API: success = 200 with result, error = 4xx/5xx with error object
+        guard httpResponse.statusCode == 200 else {
+            // Try to parse error body
+            if let errorObj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let message = errorObj["message"] as? String {
+                throw OdooError.odooError(message: "HTTP \(httpResponse.statusCode): \(message)")
+            }
+            throw OdooError.httpError(statusCode: httpResponse.statusCode)
+        }
+
+        return try JSONSerialization.jsonObject(with: data)
+    }
+
+    // MARK: - Legacy JSON-RPC API (Odoo 14-19)
+    // POST /jsonrpc
+
+    private func authenticateLegacy() async throws -> Int {
+        if let uid = _uid.value {
+            return uid
+        }
+
+        let uid: Int = try await callLegacy(
+            service: "common",
+            method: "authenticate",
+            args: [database, username, apiKey, [String: String]()]
+        )
+
+        guard uid > 0 else {
+            throw OdooError.authenticationFailed
+        }
+
+        _uid.value = uid
+        return uid
+    }
+
+    private func searchReadLegacy(
+        model: String,
+        domain: [[Any]],
+        fields: [String],
+        limit: Int? = nil
+    ) async throws -> [[String: Any]] {
+        var kwargs: [String: Any] = ["fields": fields]
+        if let limit { kwargs["limit"] = limit }
+
+        let result = try await executeKwLegacy(
+            model: model,
+            method: "search_read",
+            args: [domain],
+            kwargs: kwargs
+        )
+
+        guard let records = result as? [[String: Any]] else {
+            throw OdooError.unexpectedResultType
+        }
+        return records
+    }
+
+    private func callMethodLegacy(model: String, method: String, ids: [Int]) async throws {
+        _ = try await executeKwLegacy(model: model, method: method, args: [ids])
+    }
+
+    /// Send a legacy JSON-RPC call and decode the result
+    private func callLegacy<T: Decodable>(service: String, method: String, args: [Any]) async throws -> T {
+        let endpoint = baseURL.appendingPathComponent("jsonrpc")
+
+        let params: [String: Any] = [
+            "service": service,
+            "method": method,
+            "args": args,
+        ]
 
         let body: [String: Any] = [
             "jsonrpc": "2.0",
-            "id": requestId,
+            "id": Int.random(in: 1...999999),
             "method": "call",
-            "params": [
-                "service": service,
-                "method": method,
-                "args": args,
-            ],
+            "params": params,
         ]
+
+        guard JSONSerialization.isValidJSONObject(body) else {
+            throw OdooError.invalidRequest(detail: "Cannot serialize request body to JSON")
+        }
 
         let jsonData = try JSONSerialization.data(withJSONObject: body)
 
@@ -59,7 +262,6 @@ final class OdooJSONRPCClient: Sendable {
             throw OdooError.httpError(statusCode: httpResponse.statusCode)
         }
 
-        // Parse the JSON-RPC response
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
 
         if let error = json["error"] as? [String: Any] {
@@ -69,64 +271,46 @@ final class OdooJSONRPCClient: Sendable {
             throw OdooError.odooError(message: message)
         }
 
-        // The result is in json["result"]
         guard let result = json["result"] else {
             throw OdooError.noResult
         }
 
-        // Re-serialize the result and decode to the expected type
         let resultData = try JSONSerialization.data(withJSONObject: result)
         return try JSONDecoder().decode(T.self, from: resultData)
     }
 
-    // MARK: - Authentication
-
-    /// Authenticate and return the user ID
-    func authenticate() async throws -> Int {
-        if let uid = _uid.value {
-            return uid
-        }
-
-        let uid: Int = try await call(
-            service: "common",
-            method: "authenticate",
-            args: [database, username, apiKey, [:] as [String: Any]]
-        )
-
-        guard uid > 0 else {
-            throw OdooError.authenticationFailed
-        }
-
-        _uid.value = uid
-        return uid
-    }
-
-    // MARK: - Model Operations
-
-    /// Call execute_kw on an Odoo model
-    func executeKw(
+    /// Call execute_kw via legacy JSON-RPC
+    private func executeKwLegacy(
         model: String,
         method: String,
         args: [Any],
         kwargs: [String: Any] = [:]
     ) async throws -> Any {
-        let uid = try await authenticate()
+        let uid = try await authenticateLegacy()
 
         let callArgs: [Any] = [
             database, uid, apiKey, model, method, args,
-            kwargs.isEmpty ? [:] as [String: Any] : kwargs,
+            kwargs.isEmpty ? [String: String]() : kwargs,
+        ]
+
+        let endpoint = baseURL.appendingPathComponent("jsonrpc")
+
+        let params: [String: Any] = [
+            "service": "object",
+            "method": "execute_kw",
+            "args": callArgs,
         ]
 
         let body: [String: Any] = [
             "jsonrpc": "2.0",
             "id": Int.random(in: 1...999999),
             "method": "call",
-            "params": [
-                "service": "object",
-                "method": "execute_kw",
-                "args": callArgs,
-            ],
+            "params": params,
         ]
+
+        guard JSONSerialization.isValidJSONObject(body) else {
+            throw OdooError.invalidRequest(detail: "Cannot serialize execute_kw request to JSON")
+        }
 
         let jsonData = try JSONSerialization.data(withJSONObject: body)
 
@@ -156,43 +340,10 @@ final class OdooJSONRPCClient: Sendable {
 
         return result
     }
-
-    /// Search and read records
-    func searchRead(
-        model: String,
-        domain: [[Any]],
-        fields: [String],
-        limit: Int? = nil
-    ) async throws -> [[String: Any]] {
-        var kwargs: [String: Any] = ["fields": fields]
-        if let limit { kwargs["limit"] = limit }
-
-        let result = try await executeKw(
-            model: model,
-            method: "search_read",
-            args: [domain],
-            kwargs: kwargs
-        )
-
-        guard let records = result as? [[String: Any]] else {
-            throw OdooError.unexpectedResultType
-        }
-        return records
-    }
-
-    /// Call a method on specific record IDs
-    func callMethod(
-        model: String,
-        method: String,
-        ids: [Int]
-    ) async throws {
-        _ = try await executeKw(model: model, method: method, args: [ids])
-    }
 }
 
 // MARK: - Thread-safe mutable value
 
-/// Simple thread-safe wrapper (no external dependencies)
 final class ManagedAtomic<T>: @unchecked Sendable {
     private var _value: T
     private let lock = NSLock()
@@ -209,6 +360,8 @@ final class ManagedAtomic<T>: @unchecked Sendable {
 
 enum OdooError: Error, LocalizedError {
     case invalidResponse
+    case invalidRequest(detail: String)
+    case invalidURL(url: String)
     case httpError(statusCode: Int)
     case authenticationFailed
     case odooError(message: String)
@@ -218,6 +371,8 @@ enum OdooError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidResponse: return "Invalid response from Odoo"
+        case .invalidRequest(let detail): return "Invalid request: \(detail)"
+        case .invalidURL(let url): return "Invalid Odoo URL: \(url)"
         case .httpError(let code): return "HTTP error \(code)"
         case .authenticationFailed: return "Authentication failed — check credentials"
         case .odooError(let msg): return "Odoo: \(msg)"

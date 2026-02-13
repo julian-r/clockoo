@@ -7,6 +7,28 @@ struct AccountConfig: Codable, Identifiable {
     let url: String
     let database: String
     let username: String
+    /// API version: "json2" (Odoo 19+, default) or "legacy" (Odoo 14-18)
+    var apiVersion: OdooAPIVersion
+
+    init(id: String, label: String, url: String, database: String, username: String, apiVersion: OdooAPIVersion = .json2) {
+        self.id = id
+        self.label = label
+        self.url = url
+        self.database = database
+        self.username = username
+        self.apiVersion = apiVersion
+    }
+
+    // Decode with fallback for configs without apiVersion field
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        label = try container.decode(String.self, forKey: .label)
+        url = try container.decode(String.self, forKey: .url)
+        database = try container.decode(String.self, forKey: .database)
+        username = try container.decode(String.self, forKey: .username)
+        apiVersion = try container.decodeIfPresent(OdooAPIVersion.self, forKey: .apiVersion) ?? .json2
+    }
 }
 
 /// Root config file structure
@@ -48,7 +70,8 @@ enum ConfigLoader {
                 label: "My Company",
                 url: "https://mycompany.odoo.com",
                 database: "mycompany",
-                username: "user@example.com"
+                username: "user@example.com",
+                apiVersion: .json2
             )
         ])
         let encoder = JSONEncoder()

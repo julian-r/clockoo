@@ -88,17 +88,22 @@ struct Timesheet: Identifiable {
     }
 
     /// URL to open the source record in Odoo web
+    /// Uses the same format as vodoo: /web#id=X&model=Y&view_type=form
     func webURL(baseURL: String) -> URL? {
         let base = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let path: String
+        let model: String
+        let recordId: Int
         switch source {
         case .task(let id, _):
-            path = "/odoo/project/\(id)"
+            model = "project.task"
+            recordId = id
         case .ticket(let id, _):
-            path = "/odoo/helpdesk/\(id)"
+            model = "helpdesk.ticket"
+            recordId = id
         case .standalone:
-            path = "/odoo/timesheets/\(id)"
+            model = "account.analytic.line"
+            recordId = id
         }
-        return URL(string: "\(base)\(path)")
+        return URL(string: "\(base)/web#id=\(recordId)&model=\(model)&view_type=form")
     }
 }

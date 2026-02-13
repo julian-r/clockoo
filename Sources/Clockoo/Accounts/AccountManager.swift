@@ -59,7 +59,8 @@ final class AccountManager: ObservableObject {
             url: account.url,
             database: account.database,
             username: account.username,
-            apiKey: apiKey
+            apiKey: apiKey,
+            apiVersion: account.apiVersion
         )
         let service = OdooTimerService(client: client, accountId: account.id)
         timerServices[account.id] = service
